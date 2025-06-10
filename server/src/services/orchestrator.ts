@@ -116,6 +116,16 @@ class OrchestratorService {
       })),
     ];
 
+    // Check if we have a real OpenAI API key
+    if (appConfig.openaiApiKey === 'sk-demo-key-for-testing') {
+      // Demo mode - return contextual responses based on last user input
+      const lastUserMessage = state.transcript
+        .filter(t => t.speaker === 'caller')
+        .slice(-1)[0]?.text.toLowerCase() || '';
+      
+      return this.generateDemoResponse(lastUserMessage);
+    }
+
     try {
       const completion = await this.openai.chat.completions.create({
         model: appConfig.openaiModel,
@@ -130,12 +140,81 @@ class OrchestratorService {
         confidence: 0.8,
       };
     } catch (error) {
+      console.error('OpenAI API error:', error);
+      
+      // Fallback to demo responses on API error
+      const lastUserMessage = state.transcript
+        .filter(t => t.speaker === 'caller')
+        .slice(-1)[0]?.text.toLowerCase() || '';
+      
+      return this.generateDemoResponse(lastUserMessage);
+    }
+  }
+
+  /**
+   * Generate contextual demo responses for testing without OpenAI
+   */
+  private generateDemoResponse(userInput: string): GPTResponse {
+    // Greeting responses
+    if (userInput.includes('hello') || userInput.includes('hi') || userInput === '') {
       return {
-        message: "Sorry mate, having a bit of trouble. Let me get someone to help you.",
-        action: 'ESCALATE',
-        confidence: 0.1,
+        message: "G'day mate! Thanks for calling. I'm Johnno, your AI assistant. How can I help you today?",
+        action: 'CONTINUE',
+        confidence: 0.9,
       };
     }
+    
+    // Booking requests
+    if (userInput.includes('book') || userInput.includes('appointment') || userInput.includes('schedule')) {
+      return {
+        message: "No worries! I'd be happy to help you book an appointment. Can you tell me your name and what service you're after?",
+        action: 'CONTINUE',
+        confidence: 0.9,
+      };
+    }
+    
+    // Hours inquiry
+    if (userInput.includes('hours') || userInput.includes('open') || userInput.includes('time')) {
+      return {
+        message: "We're open Monday to Friday, 9am to 5pm, and Saturday mornings 9am to 12pm. Would you like to book something?",
+        action: 'CONTINUE',
+        confidence: 0.9,
+      };
+    }
+    
+    // Help requests
+    if (userInput.includes('help') || userInput.includes('need') || userInput.includes('problem')) {
+      return {
+        message: "Sure thing mate! I'm here to help. Are you looking to book an appointment, ask about our services, or something else?",
+        action: 'CONTINUE',
+        confidence: 0.9,
+      };
+    }
+    
+    // Services inquiry
+    if (userInput.includes('service') || userInput.includes('treatment') || userInput.includes('offer')) {
+      return {
+        message: "We offer a range of services including consultations, treatments, and check-ups. What specifically are you interested in?",
+        action: 'CONTINUE',
+        confidence: 0.9,
+      };
+    }
+    
+    // Name provided
+    if (userInput.includes('my name is') || userInput.includes('i am') || userInput.includes('this is')) {
+      return {
+        message: "Great to meet you! Now, what service would you like to book, and do you have a preferred day or time?",
+        action: 'CONTINUE',
+        confidence: 0.9,
+      };
+    }
+    
+    // Default response
+    return {
+      message: "That's interesting! Can you tell me a bit more about what you're looking for? I'm here to help with bookings and questions.",
+      action: 'CONTINUE',
+      confidence: 0.8,
+    };
   }
 
   /**

@@ -1,6 +1,7 @@
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import websocket from '@fastify/websocket';
+import formbody from '@fastify/formbody';
 import { appConfig } from '@/config';
 import { db } from '@/services/database';
 import { redis } from '@/services/redis';
@@ -27,6 +28,9 @@ async function buildApp() {
     origin: true,
     credentials: true,
   });
+
+  // Register form body parser for Twilio webhooks
+  await fastify.register(formbody);
 
   // Register WebSocket support
   await fastify.register(websocket);
@@ -73,8 +77,31 @@ async function buildApp() {
         webhook: '/twilio/voice',
         stream: '/twilio/stream',
         booking: '/actions/book',
+        calls: '/api/calls',
+        dashboard: '/api/dashboard',
       },
     });
+  });
+
+  // API endpoints for dashboard
+  fastify.get('/api/calls', async (request, reply) => {
+    try {
+      const calls = await db.getCalls();
+      reply.send(calls);
+    } catch (error) {
+      fastify.log.error('Error fetching calls:', error);
+      reply.status(500).send({ error: 'Failed to fetch calls' });
+    }
+  });
+
+  fastify.get('/api/dashboard', async (request, reply) => {
+    try {
+      const stats = await db.getDashboardStats();
+      reply.send(stats);
+    } catch (error) {
+      fastify.log.error('Error fetching dashboard stats:', error);
+      reply.status(500).send({ error: 'Failed to fetch dashboard stats' });
+    }
   });
 
   // Register route plugins
@@ -86,33 +113,34 @@ async function buildApp() {
 
 async function start() {
   try {
+    // Build app first to get the configured logger
+    const app = await buildApp();
+    
     // Connect to services
     await redis.connect();
-    fastify.log.info('✅ Connected to Redis');
+    app.log.info('✅ Connected to Redis');
 
     // Test database connection
-    fastify.log.info('Testing database connection...');
+    app.log.info('Testing database connection...');
     const dbHealthy = await db.healthCheck();
     if (!dbHealthy) {
       throw new Error(`Database connection failed. Check that PostgreSQL is running and accessible at: ${appConfig.databaseUrl}`);
     }
-    fastify.log.info('✅ Connected to PostgreSQL database');
+    app.log.info('✅ Connected to PostgreSQL database');
 
-    // Build and start server
-    const app = await buildApp();
-    
+    // Start server
     const address = await app.listen({
       port: appConfig.port,
       host: '0.0.0.0',
     });
 
-    fastify.log.info(`🚀 Ringaroo server listening at ${address}`);
-    fastify.log.info(`📞 Webhook URL: ${appConfig.webhookBaseUrl}/twilio/voice`);
-    fastify.log.info(`🎤 Stream URL: ${appConfig.webhookBaseUrl.replace('http', 'ws')}/twilio/stream`);
+    app.log.info(`🚀 Ringaroo server listening at ${address}`);
+    app.log.info(`📞 Webhook URL: ${appConfig.webhookBaseUrl}/twilio/voice`);
+    app.log.info(`🎤 Stream URL: ${appConfig.webhookBaseUrl.replace('http', 'ws')}/twilio/stream`);
 
     // Graceful shutdown
     const shutdown = async () => {
-      fastify.log.info('Shutting down server...');
+      app.log.info('Shutting down server...');
       
       try {
         await redis.disconnect();
@@ -120,7 +148,7 @@ async function start() {
         await app.close();
         process.exit(0);
       } catch (error) {
-        fastify.log.error('Error during shutdown:', error);
+        app.log.error('Error during shutdown:', error);
         process.exit(1);
       }
     };
@@ -129,7 +157,7 @@ async function start() {
     process.on('SIGINT', shutdown);
 
   } catch (error) {
-    fastify.log.error('Failed to start server:', error);
+    console.error('Failed to start server:', error);
     process.exit(1);
   }
 }

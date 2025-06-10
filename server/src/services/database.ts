@@ -193,6 +193,41 @@ class DatabaseService {
     await this.pool.end();
   }
 
+  // Dashboard operations
+  async getCalls(limit = 50): Promise<Call[]> {
+    const result = await this.query<Call>(
+      `SELECT * FROM ringaroo.calls 
+       ORDER BY started_at DESC 
+       LIMIT $1`,
+      [limit]
+    );
+    return result;
+  }
+
+  async getDashboardStats(): Promise<{
+    totalCalls: number;
+    activeCalls: number;
+    totalBookings: number;
+    pendingBookings: number;
+    recentCalls: Call[];
+  }> {
+    const [totalCallsResult, activeCallsResult, totalBookingsResult, pendingBookingsResult, recentCallsResult] = await Promise.all([
+      this.query('SELECT COUNT(*) as count FROM ringaroo.calls'),
+      this.query("SELECT COUNT(*) as count FROM ringaroo.calls WHERE status = 'in_progress'"),
+      this.query('SELECT COUNT(*) as count FROM ringaroo.bookings'),
+      this.query("SELECT COUNT(*) as count FROM ringaroo.bookings WHERE status = 'pending'"),
+      this.query('SELECT * FROM ringaroo.calls ORDER BY started_at DESC LIMIT 5'),
+    ]);
+
+    return {
+      totalCalls: parseInt(totalCallsResult[0]?.count || '0'),
+      activeCalls: parseInt(activeCallsResult[0]?.count || '0'),
+      totalBookings: parseInt(totalBookingsResult[0]?.count || '0'),
+      pendingBookings: parseInt(pendingBookingsResult[0]?.count || '0'),
+      recentCalls: recentCallsResult,
+    };
+  }
+
   async healthCheck(): Promise<boolean> {
     try {
       await this.query('SELECT 1');
