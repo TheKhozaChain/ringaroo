@@ -2,6 +2,7 @@ import { FastifyPluginAsync } from 'fastify';
 import { orchestrator } from '@/services/orchestrator';
 import { ttsService } from '@/services/tts';
 import { speechService, AudioFormat } from '@/services/speech';
+import { conversationService } from '@/services/conversation';
 import OpenAI from 'openai';
 import { appConfig } from '@/config';
 import type { TwilioStreamMessage } from '@/types';
@@ -26,8 +27,9 @@ const twilioRoutes: FastifyPluginAsync = async function (fastify) {
         return reply.status(400).send({ error: 'Missing CallSid' });
       }
 
-      // Initialize dialogue state (simplified for testing)
-      fastify.log.info('Call received for testing', { CallSid, From });
+      // Initialize conversation with GPT-4 integration
+      await conversationService.initializeConversation(CallSid, From);
+      fastify.log.info('Conversation initialized', { CallSid, From });
 
       // Return TwiML with speech recognition
       const webhookUrl = process.env.WEBHOOK_BASE_URL || `https://${request.headers.host}`;
@@ -85,6 +87,7 @@ const twilioRoutes: FastifyPluginAsync = async function (fastify) {
       // Handle call completion
       if (CallStatus === 'completed' || CallStatus === 'failed' || CallStatus === 'busy' || CallStatus === 'no-answer') {
         await orchestrator.endCall(CallSid);
+        await conversationService.endConversation(CallSid);
         fastify.log.info('Call ended and state cleaned up', { CallSid, CallStatus });
       }
 
@@ -95,7 +98,7 @@ const twilioRoutes: FastifyPluginAsync = async function (fastify) {
     }
   });
 
-  // Handle speech input from caller
+  // Handle speech input from caller with GPT-4 intelligence
   fastify.post('/twilio/gather', async (request, reply) => {
     try {
       const { CallSid, SpeechResult, Confidence } = request.body as any;
@@ -106,40 +109,64 @@ const twilioRoutes: FastifyPluginAsync = async function (fastify) {
         Confidence 
       });
 
-      let responseText = "That's interesting! Is there anything else I can help you with?";
+      let responseText = "I didn't quite catch that. Could you try speaking a bit louder or slower?";
+      let continueConversation = true;
       
-      if (SpeechResult && Confidence > 0.5) {
-        // Simple keyword-based responses (could use orchestrator here)
-        const speech = SpeechResult.toLowerCase();
-        
-        if (speech.includes('hello') || speech.includes('hi')) {
-          responseText = "Hello there! Great to hear from you. What can I help you with today?";
-        } else if (speech.includes('book') || speech.includes('appointment')) {
-          responseText = "I'd be happy to help you book an appointment! What service are you interested in?";
-        } else if (speech.includes('hours') || speech.includes('open')) {
-          responseText = "We're open Monday to Friday, 9am to 5pm, and Saturday mornings. When would you like to come in?";
-        } else if (speech.includes('help')) {
-          responseText = "Of course! I can help you with bookings, hours, services, or general questions. What do you need?";
-        } else {
-          responseText = `You said: ${SpeechResult}. That's great! How else can I help you today?`;
+      if (SpeechResult && parseFloat(Confidence || '0') > 0.3) {
+        try {
+          // Use GPT-4 conversation service for intelligent responses
+          const gptResponse = await conversationService.processUserInput(
+            CallSid, 
+            SpeechResult, 
+            parseFloat(Confidence || '1.0')
+          );
+          
+          responseText = gptResponse.message;
+          
+          // Log GPT response details
+          fastify.log.info('GPT-4 response generated', {
+            CallSid,
+            intent: gptResponse.intent,
+            confidence: gptResponse.confidence,
+            tokenUsage: gptResponse.tokenUsage
+          });
+          
+          // Check if conversation should end
+          if (gptResponse.intent === 'goodbye') {
+            continueConversation = false;
+          }
+          
+        } catch (gptError) {
+          fastify.log.error('GPT-4 processing error:', gptError);
+          responseText = "No worries mate! I'm having a bit of trouble right now. How else can I help you?";
         }
-      } else {
-        responseText = "I didn't quite catch that. Could you try speaking a bit louder or slower?";
       }
       
-      // Continue the conversation
+      // Continue the conversation or end it
       const webhookUrl = process.env.WEBHOOK_BASE_URL || `https://${request.headers.host}`;
       const gatherUrl = webhookUrl + '/twilio/gather';
       
-      const responseTwiml = `<?xml version="1.0" encoding="UTF-8"?>
+      let responseTwiml;
+      
+      if (continueConversation) {
+        responseTwiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
     <Say voice="alice" language="en-AU">${responseText.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</Say>
     <Gather input="speech" timeout="5" speechTimeout="auto" action="${gatherUrl}">
-        <Say voice="alice" language="en-AU">What else can I help you with?</Say>
+        <Say voice="alice" language="en-AU">Is there anything else I can help you with?</Say>
     </Gather>
     <Say voice="alice" language="en-AU">Thanks for calling! Have a great day!</Say>
     <Hangup/>
 </Response>`;
+      } else {
+        responseTwiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Say voice="alice" language="en-AU">${responseText.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</Say>
+    <Pause length="1"/>
+    <Say voice="alice" language="en-AU">Thanks for calling! Have a great day!</Say>
+    <Hangup/>
+</Response>`;
+      }
       
       reply.type('text/xml').send(responseTwiml);
       
