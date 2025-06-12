@@ -2,6 +2,8 @@ import { FastifyPluginAsync } from 'fastify';
 import { orchestrator } from '@/services/orchestrator';
 import { ttsService } from '@/services/tts';
 import { speechService, AudioFormat } from '@/services/speech';
+import OpenAI from 'openai';
+import { appConfig } from '@/config';
 import type { TwilioStreamMessage } from '@/types';
 
 const twilioRoutes: FastifyPluginAsync = async function (fastify) {
@@ -24,24 +26,26 @@ const twilioRoutes: FastifyPluginAsync = async function (fastify) {
         return reply.status(400).send({ error: 'Missing CallSid' });
       }
 
-      // Initialize dialogue state
-      await orchestrator.initializeCall(CallSid, From);
-      fastify.log.info('Dialogue state initialized', { CallSid });
+      // Initialize dialogue state (simplified for testing)
+      fastify.log.info('Call received for testing', { CallSid, From });
 
-      // Return TwiML to start media stream
+      // Return TwiML with speech recognition
       const webhookUrl = process.env.WEBHOOK_BASE_URL || `https://${request.headers.host}`;
-      const streamUrl = webhookUrl.replace('https://', 'wss://') + '/twilio/stream';
+      const gatherUrl = webhookUrl + '/twilio/gather';
+      
       const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Connect>
-        <Stream url="${streamUrl}" />
-    </Connect>
     <Say voice="alice" language="en-AU">
-        G'day! You've reached our AI assistant. Please hold on while I connect you.
+        G'day! Thanks for calling. I'm Johnno, your AI assistant. How can I help you today?
     </Say>
+    <Gather input="speech" timeout="5" speechTimeout="auto" action="${gatherUrl}">
+        <Say voice="alice" language="en-AU">Please tell me what you need.</Say>
+    </Gather>
+    <Say voice="alice" language="en-AU">Sorry, I didn't hear you. Goodbye!</Say>
+    <Hangup/>
 </Response>`;
 
-      fastify.log.debug('Sending TwiML response', { CallSid, streamUrl });
+      fastify.log.debug('Sending TwiML response', { CallSid });
       reply.type('text/xml').send(twiml);
     } catch (error) {
       fastify.log.error('Error handling incoming call:', error);
@@ -91,7 +95,61 @@ const twilioRoutes: FastifyPluginAsync = async function (fastify) {
     }
   });
 
-  // WebSocket handler for media streams
+  // Handle speech input from caller
+  fastify.post('/twilio/gather', async (request, reply) => {
+    try {
+      const { CallSid, SpeechResult, Confidence } = request.body as any;
+      
+      fastify.log.info('Speech input received', { 
+        CallSid, 
+        SpeechResult, 
+        Confidence 
+      });
+
+      let responseText = "That's interesting! Is there anything else I can help you with?";
+      
+      if (SpeechResult && Confidence > 0.5) {
+        // Simple keyword-based responses (could use orchestrator here)
+        const speech = SpeechResult.toLowerCase();
+        
+        if (speech.includes('hello') || speech.includes('hi')) {
+          responseText = "Hello there! Great to hear from you. What can I help you with today?";
+        } else if (speech.includes('book') || speech.includes('appointment')) {
+          responseText = "I'd be happy to help you book an appointment! What service are you interested in?";
+        } else if (speech.includes('hours') || speech.includes('open')) {
+          responseText = "We're open Monday to Friday, 9am to 5pm, and Saturday mornings. When would you like to come in?";
+        } else if (speech.includes('help')) {
+          responseText = "Of course! I can help you with bookings, hours, services, or general questions. What do you need?";
+        } else {
+          responseText = `You said: ${SpeechResult}. That's great! How else can I help you today?`;
+        }
+      } else {
+        responseText = "I didn't quite catch that. Could you try speaking a bit louder or slower?";
+      }
+      
+      // Continue the conversation
+      const webhookUrl = process.env.WEBHOOK_BASE_URL || `https://${request.headers.host}`;
+      const gatherUrl = webhookUrl + '/twilio/gather';
+      
+      const responseTwiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Say voice="alice" language="en-AU">${responseText.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</Say>
+    <Gather input="speech" timeout="5" speechTimeout="auto" action="${gatherUrl}">
+        <Say voice="alice" language="en-AU">What else can I help you with?</Say>
+    </Gather>
+    <Say voice="alice" language="en-AU">Thanks for calling! Have a great day!</Say>
+    <Hangup/>
+</Response>`;
+      
+      reply.type('text/xml').send(responseTwiml);
+      
+    } catch (error) {
+      fastify.log.error('Error in gather endpoint:', error);
+      reply.status(500).send({ error: 'Internal server error' });
+    }
+  });
+
+  // WebSocket handler for media streams (keeping for future use)
   fastify.register(async function (fastify) {
     fastify.get('/twilio/stream', { websocket: true }, (socket, request) => {
       let callSid: string | null = null;
@@ -102,9 +160,9 @@ const twilioRoutes: FastifyPluginAsync = async function (fastify) {
       let isProcessingAudio = false;
       
       // Audio processing configuration
-      const AUDIO_CHUNK_SIZE = 8000; // ~1 second at 8kHz
-      const SILENCE_TIMEOUT = 1500; // 1.5 seconds of silence before processing
-      const MIN_AUDIO_LENGTH = 1600; // Minimum audio length to process (~200ms)
+      const AUDIO_CHUNK_SIZE = 16000; // ~2 seconds at 8kHz
+      const SILENCE_TIMEOUT = 2000; // 2 seconds of silence before processing
+      const MIN_AUDIO_LENGTH = 4000; // Minimum audio length to process (~500ms)
 
       // Connection timeout handler
       const timeoutHandler = setInterval(() => {
@@ -271,21 +329,31 @@ const twilioRoutes: FastifyPluginAsync = async function (fastify) {
 };
 
 
-// Enhanced TTS function with real TTS integration
+// Enhanced TTS function using OpenAI TTS for Media Streams
 async function sendTTSToCall(fastifyInstance: any, socket: any, text: string): Promise<void> {
   try {
     fastifyInstance.log.info('Sending TTS response:', { text });
     
-    try {
-      // Method 1: Use real TTS service for better quality
-      const audioBuffer = await ttsService.synthesize(text);
-      
-      if (audioBuffer.length > 0) {
-        // Convert audio to base64 and send as media
-        const audioBase64 = audioBuffer.toString('base64');
-        const chunkSize = 8000; // Appropriate for Twilio's format
+    // Use OpenAI TTS to generate audio
+    if (appConfig.openaiApiKey && appConfig.openaiApiKey !== 'sk-demo-key-for-testing') {
+      try {
+        const openai = new OpenAI({ apiKey: appConfig.openaiApiKey });
         
-        // Send audio in chunks
+        const response = await openai.audio.speech.create({
+          model: 'tts-1',
+          voice: 'nova', // Clear, Australian-friendly voice
+          input: text,
+          response_format: 'mp3',
+        });
+        
+        const audioBuffer = Buffer.from(await response.arrayBuffer());
+        
+        // Convert to μ-law format for Twilio (simplified approach)
+        // For now, send as base64 encoded audio
+        const audioBase64 = audioBuffer.toString('base64');
+        
+        // Send audio in chunks suitable for Twilio Media Stream
+        const chunkSize = 320; // Small chunks for real-time streaming
         for (let i = 0; i < audioBase64.length; i += chunkSize) {
           const chunk = audioBase64.slice(i, i + chunkSize);
           const mediaMessage = {
@@ -300,36 +368,24 @@ async function sendTTSToCall(fastifyInstance: any, socket: any, text: string): P
           };
           socket.send(JSON.stringify(mediaMessage));
           
-          // Small delay between chunks to avoid overwhelming
+          // Small delay to avoid overwhelming the stream
           await new Promise(resolve => setTimeout(resolve, 20));
         }
+        
+        fastifyInstance.log.debug('OpenAI TTS audio sent successfully');
         return;
+        
+      } catch (ttsError) {
+        fastifyInstance.log.warn('OpenAI TTS failed, using fallback:', ttsError);
       }
-    } catch (ttsError) {
-      fastifyInstance.log.warn('TTS service failed, falling back to Twilio Say:', ttsError);
     }
     
-    // Method 2: Fallback to Twilio's built-in TTS
-    const sayMessage = {
-      event: 'say',
-      text: text,
-      voice: 'alice',
-      language: 'en-AU'
-    };
-    
-    socket.send(JSON.stringify(sayMessage));
+    // Fallback: Log the text (user will see in server logs)
+    fastifyInstance.log.info('TTS RESPONSE (audio not configured):', { text });
+    console.log(`🗣️  JOHNNO SAYS: "${text}"`);
     
   } catch (error) {
     fastifyInstance.log.error('TTS error:', error);
-    
-    // Final fallback: Send a simple error message
-    const fallbackMessage = {
-      event: 'say',
-      text: 'Sorry, I had trouble with that response. Can you repeat?',
-      voice: 'alice',
-      language: 'en-AU'
-    };
-    socket.send(JSON.stringify(fallbackMessage));
   }
 }
 

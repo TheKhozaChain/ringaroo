@@ -29,10 +29,27 @@ export class WhisperSpeechService implements SpeechRecognitionService {
 
   async transcribe(audioBuffer: Buffer, format: AudioFormat): Promise<SpeechRecognitionResult> {
     try {
+      // Check minimum audio length before processing
+      if (audioBuffer.length < 800) { // ~100ms at 8kHz
+        return {
+          text: '',
+          confidence: 0.1,
+        };
+      }
+
       // Convert μ-law to WAV format if needed
       const processedBuffer = format === AudioFormat.MULAW_8KHZ 
         ? this.convertMulawToWav(audioBuffer)
         : audioBuffer;
+
+      // Ensure the WAV file meets Whisper's minimum duration
+      const wavDurationSeconds = (processedBuffer.length - 44) / (8000 * 2); // 8kHz, 16-bit
+      if (wavDurationSeconds < 0.1) {
+        return {
+          text: '',
+          confidence: 0.1,
+        };
+      }
 
       // Create a File-like object for the Whisper API
       const audioFile = new File([processedBuffer], 'audio.wav', {
