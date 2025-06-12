@@ -1,6 +1,7 @@
 import { FastifyPluginAsync } from 'fastify';
 import { orchestrator } from '@/services/orchestrator';
 import { ttsService } from '@/services/tts';
+import { speechService, AudioFormat } from '@/services/speech';
 import type { TwilioStreamMessage } from '@/types';
 
 const twilioRoutes: FastifyPluginAsync = async function (fastify) {
@@ -28,7 +29,8 @@ const twilioRoutes: FastifyPluginAsync = async function (fastify) {
       fastify.log.info('Dialogue state initialized', { CallSid });
 
       // Return TwiML to start media stream
-      const streamUrl = `wss://${request.headers.host}/twilio/stream`;
+      const webhookUrl = process.env.WEBHOOK_BASE_URL || `https://${request.headers.host}`;
+      const streamUrl = webhookUrl.replace('https://', 'wss://') + '/twilio/stream';
       const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
     <Connect>
@@ -96,6 +98,13 @@ const twilioRoutes: FastifyPluginAsync = async function (fastify) {
       let audioBuffer = '';
       let streamSid: string | null = null;
       let lastActivity = Date.now();
+      let silenceTimer: NodeJS.Timeout | null = null;
+      let isProcessingAudio = false;
+      
+      // Audio processing configuration
+      const AUDIO_CHUNK_SIZE = 8000; // ~1 second at 8kHz
+      const SILENCE_TIMEOUT = 1500; // 1.5 seconds of silence before processing
+      const MIN_AUDIO_LENGTH = 1600; // Minimum audio length to process (~200ms)
 
       // Connection timeout handler
       const timeoutHandler = setInterval(() => {
@@ -147,17 +156,23 @@ const twilioRoutes: FastifyPluginAsync = async function (fastify) {
                 // Accumulate audio data
                 audioBuffer += data.media.payload;
                 
-                // Process when we have enough audio (simple approach for demo)
-                if (audioBuffer.length > 8000) { // Roughly 1 second at 8kHz
-                  const transcript = await processAudioChunk(audioBuffer);
-                  audioBuffer = ''; // Reset buffer
-                  
-                  if (transcript) {
-                    fastify.log.debug('Audio transcribed', { callSid, transcript });
-                    const response = await orchestrator.processSpeech(callSid, transcript, 0.9);
-                    await sendTTSToCall(fastify, socket, response);
-                  }
+                // Reset silence timer - we're receiving audio
+                if (silenceTimer) {
+                  clearTimeout(silenceTimer);
+                  silenceTimer = null;
                 }
+                
+                // Process immediately if buffer is large enough
+                if (audioBuffer.length > AUDIO_CHUNK_SIZE && !isProcessingAudio) {
+                  await processAudioBuffer(fastify, socket, callSid, audioBuffer);
+                }
+                
+                // Set silence timer to process remaining audio after silence
+                silenceTimer = setTimeout(async () => {
+                  if (audioBuffer.length > MIN_AUDIO_LENGTH && !isProcessingAudio && callSid) {
+                    await processAudioBuffer(fastify, socket, callSid, audioBuffer);
+                  }
+                }, SILENCE_TIMEOUT);
               }
               break;
 
@@ -185,8 +200,45 @@ const twilioRoutes: FastifyPluginAsync = async function (fastify) {
         }
       });
 
+      // Helper function to process audio buffer
+      async function processAudioBuffer(fastifyInstance: any, socket: any, callSid: string, buffer: string) {
+        if (isProcessingAudio) return;
+        
+        isProcessingAudio = true;
+        audioBuffer = ''; // Clear buffer immediately to prevent duplicate processing
+        
+        try {
+          const audioData = Buffer.from(buffer, 'base64');
+          const result = await speechService.transcribe(audioData, AudioFormat.MULAW_8KHZ);
+          
+          if (result.text && result.confidence > 0.3) {
+            fastifyInstance.log.debug('Audio transcribed', { 
+              callSid, 
+              transcript: result.text, 
+              confidence: result.confidence 
+            });
+            
+            const response = await orchestrator.processSpeech(callSid, result.text, result.confidence);
+            await sendTTSToCall(fastifyInstance, socket, response);
+          } else {
+            fastifyInstance.log.debug('Low confidence or empty transcription', { 
+              callSid, 
+              confidence: result.confidence 
+            });
+          }
+        } catch (error) {
+          fastifyInstance.log.error('Audio processing error:', error);
+        } finally {
+          isProcessingAudio = false;
+        }
+      }
+
       socket.on('close', (code: number, reason: Buffer) => {
         clearInterval(timeoutHandler);
+        if (silenceTimer) {
+          clearTimeout(silenceTimer);
+        }
+        
         fastify.log.info('WebSocket connection closed', { 
           callSid, 
           streamSid,
@@ -203,6 +255,10 @@ const twilioRoutes: FastifyPluginAsync = async function (fastify) {
 
       socket.on('error', (error: Error) => {
         clearInterval(timeoutHandler);
+        if (silenceTimer) {
+          clearTimeout(silenceTimer);
+        }
+        
         fastify.log.error('WebSocket error:', {
           error: error.message,
           stack: error.stack,
@@ -214,34 +270,6 @@ const twilioRoutes: FastifyPluginAsync = async function (fastify) {
   });
 };
 
-// Process audio using OpenAI Whisper
-async function processAudioChunk(audioBase64: string): Promise<string | null> {
-  try {
-    if (!audioBase64 || audioBase64.length < 1000) {
-      return null; // Too short to process
-    }
-
-    // Convert base64 to buffer and create form data for Whisper
-    const audioBuffer = Buffer.from(audioBase64, 'base64');
-    
-    // For now, return mock transcripts but structure for real Whisper integration
-    // In production, you would send audioBuffer to OpenAI Whisper API
-    const audioLength = audioBase64.length;
-    
-    if (audioLength > 15000) {
-      return "I'd like to book an appointment for next week please";
-    } else if (audioLength > 10000) {
-      return "What are your opening hours?";
-    } else if (audioLength > 5000) {
-      return "Hello, I need some help";
-    } else {
-      return "Hi";
-    }
-  } catch (error) {
-    console.error('Audio processing error:', error);
-    return null;
-  }
-}
 
 // Enhanced TTS function with real TTS integration
 async function sendTTSToCall(fastifyInstance: any, socket: any, text: string): Promise<void> {
@@ -305,13 +333,5 @@ async function sendTTSToCall(fastifyInstance: any, socket: any, text: string): P
   }
 }
 
-/*
-// Future TTS integration function (placeholder)
-async function convertTextToSpeech(text: string): Promise<Buffer> {
-  // This would integrate with Azure Speech Services, ElevenLabs, or similar
-  // For now, return empty buffer as placeholder
-  return Buffer.alloc(0);
-}
-*/
 
 export default twilioRoutes; 

@@ -40,16 +40,21 @@ class OrchestratorService {
 
     await redis.setDialogueState(callSid, initialState);
 
-    // Create call record in database
-    await db.createCall({
-      tenantId: initialState.tenantId,
-      twilioCallSid: callSid,
-      callerNumber,
-      status: 'in_progress',
-      transcript: [],
-      actions: [],
-      startedAt: new Date(),
-    });
+    // Create call record in database (temporarily disabled for debugging)
+    try {
+      await db.createCall({
+        tenantId: initialState.tenantId,
+        twilioCallSid: callSid,
+        callerNumber,
+        status: 'in_progress',
+        transcript: [],
+        actions: [],
+        startedAt: new Date(),
+      });
+    } catch (dbError) {
+      console.error('Database call creation failed:', dbError);
+      // Continue anyway - the call can work without database record
+    }
 
     return initialState;
   }

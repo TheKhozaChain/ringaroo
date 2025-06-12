@@ -70,7 +70,8 @@
     ],
     "moduleNameMapping": {
       "^@/(.*)$": "<rootDir>/src/$1"
-    }
+    },
+    "setupFilesAfterEnv": ["<rootDir>/src/__tests__/setup.ts"]
   },
   "keywords": [
     "fastify",
