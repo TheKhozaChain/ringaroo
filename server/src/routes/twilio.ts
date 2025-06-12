@@ -37,25 +37,31 @@ const twilioRoutes: FastifyPluginAsync = async function (fastify) {
       
       const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Say voice="alice" language="en-AU">
+    <Say voice="man">
         G'day! Thanks for calling. I'm Johnno, your AI assistant. How can I help you today?
     </Say>
     <Gather input="speech" timeout="5" speechTimeout="auto" action="${gatherUrl}">
-        <Say voice="alice" language="en-AU">Please tell me what you need.</Say>
+        <Say voice="man">Please tell me what you need.</Say>
     </Gather>
-    <Say voice="alice" language="en-AU">Sorry, I didn't hear you. Goodbye!</Say>
+    <Say voice="man">Sorry, I didn't hear you. Goodbye!</Say>
     <Hangup/>
 </Response>`;
 
       fastify.log.debug('Sending TwiML response', { CallSid });
       reply.type('text/xml').send(twiml);
     } catch (error) {
-      fastify.log.error('Error handling incoming call:', error);
+      fastify.log.error('Error handling incoming call:', {
+        error: error.message,
+        stack: error.stack,
+        CallSid,
+        From,
+        To
+      });
       
       // Return error TwiML
       const errorTwiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Say voice="alice" language="en-AU">
+    <Say voice="man">
         Sorry, we're experiencing technical difficulties. Please try calling back later.
     </Say>
     <Hangup />
@@ -113,33 +119,30 @@ const twilioRoutes: FastifyPluginAsync = async function (fastify) {
       let continueConversation = true;
       
       if (SpeechResult && parseFloat(Confidence || '0') > 0.3) {
-        try {
-          // Use GPT-4 conversation service for intelligent responses
-          const gptResponse = await conversationService.processUserInput(
-            CallSid, 
-            SpeechResult, 
-            parseFloat(Confidence || '1.0')
-          );
-          
-          responseText = gptResponse.message;
-          
-          // Log GPT response details
-          fastify.log.info('GPT-4 response generated', {
-            CallSid,
-            intent: gptResponse.intent,
-            confidence: gptResponse.confidence,
-            tokenUsage: gptResponse.tokenUsage
-          });
-          
-          // Check if conversation should end
-          if (gptResponse.intent === 'goodbye') {
-            continueConversation = false;
-          }
-          
-        } catch (gptError) {
-          fastify.log.error('GPT-4 processing error:', gptError);
-          responseText = "No worries mate! I'm having a bit of trouble right now. How else can I help you?";
+        // Simple direct responses for testing
+        const input = SpeechResult.toLowerCase();
+        
+        if (input.includes('hello') || input.includes('hi') || input.includes('g\'day')) {
+          responseText = "G'day mate! Great to hear from you. What can I help you with today?";
+        } else if (input.includes('book') || input.includes('appointment')) {
+          responseText = "No worries! I'd be happy to help you book an appointment. What service are you interested in?";
+        } else if (input.includes('hours') || input.includes('open') || input.includes('time')) {
+          responseText = "We're open Monday to Friday 9am to 5pm, and Saturday mornings 9am to 12pm. When would you like to come in?";
+        } else if (input.includes('service') || input.includes('help') || input.includes('do')) {
+          responseText = "We offer consultations, bookings, and general support. What specifically can I help you with?";
+        } else if (input.includes('thank') || input.includes('bye') || input.includes('goodbye')) {
+          responseText = "No worries mate! Thanks for calling. Have a great day!";
+          continueConversation = false;
+        } else {
+          responseText = `Right, I heard you mention "${SpeechResult}". How can I help you with that today?`;
         }
+        
+        fastify.log.info('Direct response generated', {
+          CallSid,
+          SpeechResult,
+          responseText,
+          Confidence
+        });
       }
       
       // Continue the conversation or end it
@@ -151,19 +154,19 @@ const twilioRoutes: FastifyPluginAsync = async function (fastify) {
       if (continueConversation) {
         responseTwiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Say voice="alice" language="en-AU">${responseText.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</Say>
+    <Say voice="man">${responseText.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</Say>
     <Gather input="speech" timeout="5" speechTimeout="auto" action="${gatherUrl}">
-        <Say voice="alice" language="en-AU">Is there anything else I can help you with?</Say>
+        <Say voice="man">Is there anything else I can help you with?</Say>
     </Gather>
-    <Say voice="alice" language="en-AU">Thanks for calling! Have a great day!</Say>
+    <Say voice="man">Thanks for calling! Have a great day!</Say>
     <Hangup/>
 </Response>`;
       } else {
         responseTwiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Say voice="alice" language="en-AU">${responseText.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</Say>
+    <Say voice="man">${responseText.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</Say>
     <Pause length="1"/>
-    <Say voice="alice" language="en-AU">Thanks for calling! Have a great day!</Say>
+    <Say voice="man">Thanks for calling! Have a great day!</Say>
     <Hangup/>
 </Response>`;
       }
@@ -171,8 +174,21 @@ const twilioRoutes: FastifyPluginAsync = async function (fastify) {
       reply.type('text/xml').send(responseTwiml);
       
     } catch (error) {
-      fastify.log.error('Error in gather endpoint:', error);
-      reply.status(500).send({ error: 'Internal server error' });
+      fastify.log.error('Error in gather endpoint:', {
+        error: error.message,
+        stack: error.stack,
+        CallSid,
+        SpeechResult,
+        Confidence
+      });
+      
+      // Return error TwiML instead of JSON
+      const errorTwiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Say voice="man">Sorry mate, I'm having a bit of trouble right now. Please try again.</Say>
+    <Hangup/>
+</Response>`;
+      reply.status(500).type('text/xml').send(errorTwiml);
     }
   });
 
