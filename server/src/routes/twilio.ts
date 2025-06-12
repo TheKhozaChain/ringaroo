@@ -119,30 +119,45 @@ const twilioRoutes: FastifyPluginAsync = async function (fastify) {
       let continueConversation = true;
       
       if (SpeechResult && parseFloat(Confidence || '0') > 0.3) {
-        // Simple direct responses for testing
-        const input = SpeechResult.toLowerCase();
-        
-        if (input.includes('hello') || input.includes('hi') || input.includes('g\'day')) {
-          responseText = "G'day mate! Great to hear from you. What can I help you with today?";
-        } else if (input.includes('book') || input.includes('appointment')) {
-          responseText = "No worries! I'd be happy to help you book an appointment. What service are you interested in?";
-        } else if (input.includes('hours') || input.includes('open') || input.includes('time')) {
-          responseText = "We're open Monday to Friday 9am to 5pm, and Saturday mornings 9am to 12pm. When would you like to come in?";
-        } else if (input.includes('service') || input.includes('help') || input.includes('do')) {
-          responseText = "We offer consultations, bookings, and general support. What specifically can I help you with?";
-        } else if (input.includes('thank') || input.includes('bye') || input.includes('goodbye')) {
-          responseText = "No worries mate! Thanks for calling. Have a great day!";
-          continueConversation = false;
-        } else {
-          responseText = `Right, I heard you mention "${SpeechResult}". How can I help you with that today?`;
+        try {
+          // Use conversation service for GPT-4 powered responses
+          const gptResponse = await conversationService.processUserInput(
+            CallSid, 
+            SpeechResult, 
+            parseFloat(Confidence || '1.0')
+          );
+          
+          responseText = gptResponse.message;
+          
+          // Log GPT response details
+          fastify.log.info('GPT-4 response generated', {
+            CallSid,
+            SpeechResult,
+            intent: gptResponse.intent,
+            confidence: gptResponse.confidence,
+            tokenUsage: gptResponse.tokenUsage
+          });
+          
+          // Check if conversation should end
+          if (gptResponse.intent === 'goodbye') {
+            continueConversation = false;
+          }
+          
+        } catch (gptError) {
+          console.error('DETAILED ERROR:', gptError);
+          fastify.log.error('Conversation service error:', {
+            error: gptError.message,
+            stack: gptError.stack,
+            name: gptError.name,
+            code: gptError.code,
+            CallSid,
+            SpeechResult,
+            Confidence
+          });
+          
+          // Fallback to simple response
+          responseText = "No worries mate! I'm here to help. Could you tell me what you need?";
         }
-        
-        fastify.log.info('Direct response generated', {
-          CallSid,
-          SpeechResult,
-          responseText,
-          Confidence
-        });
       }
       
       // Continue the conversation or end it

@@ -111,7 +111,8 @@ export class ConversationService {
     const data = await redis.get(`conversation:${callSid}`);
     if (!data) return null;
 
-    const context = JSON.parse(data) as ConversationContext;
+    // Handle both string and already-parsed object
+    const context = typeof data === 'string' ? JSON.parse(data) : data;
     // Convert date strings back to Date objects
     context.startTime = new Date(context.startTime);
     context.lastActivity = new Date(context.lastActivity);
@@ -170,10 +171,81 @@ export class ConversationService {
    * Generate intelligent response using GPT-4
    */
   private async generateGPTResponse(context: ConversationContext, userInput: string): Promise<GPTResponse> {
-    // For now, let's use fallback responses to ensure it works
-    // We can debug the GPT-4 integration once the basic flow is working
-    console.log('Using fallback responses for testing - GPT-4 integration temporarily disabled');
-    return this.generateFallbackResponse(userInput);
+    // Check if we have a real OpenAI API key
+    if (appConfig.openaiApiKey === 'sk-demo-key-for-testing') {
+      console.log('Using demo key - falling back to simple responses');
+      return this.generateFallbackResponse(userInput);
+    }
+
+    try {
+      console.log('Attempting GPT-4 API call with key:', appConfig.openaiApiKey?.substring(0, 20) + '...');
+      
+      const systemPrompt = this.buildSystemPrompt(context);
+      const messages = [
+        { role: 'system' as const, content: systemPrompt },
+        ...context.messages.slice(-8).map(msg => ({
+          role: msg.role,
+          content: msg.content
+        }))
+      ];
+
+      console.log('Sending request to OpenAI with', messages.length, 'messages');
+
+      const completion = await this.openai.chat.completions.create({
+        model: appConfig.openaiModel || 'gpt-4',
+        messages,
+        temperature: 0.7,
+        max_tokens: 150,
+      });
+
+      console.log('OpenAI API response received successfully');
+
+      const response = completion.choices[0];
+      if (!response) {
+        throw new Error('No response from OpenAI API');
+      }
+      
+      const message = response.message?.content || "G'day! How can I help you today?";
+      
+      // Simple intent detection based on user input (not GPT response)
+      let intent = 'inquiry';
+      let extractedInfo = {};
+      let confidence = 0.8;
+
+      const userInputLower = userInput.toLowerCase();
+      if (userInputLower.includes('book') || userInputLower.includes('appointment')) {
+        intent = 'booking';
+      } else if (userInputLower.includes('hour') || userInputLower.includes('open')) {
+        intent = 'hours';
+      } else if (userInputLower.includes('service') || userInputLower.includes('offer')) {
+        intent = 'services';
+      } else if (userInputLower.includes('bye') || userInputLower.includes('thank')) {
+        intent = 'goodbye';
+      }
+
+      return {
+        message,
+        intent,
+        confidence,
+        extractedInfo,
+        tokenUsage: {
+          promptTokens: completion.usage?.prompt_tokens || 0,
+          completionTokens: completion.usage?.completion_tokens || 0,
+          totalTokens: completion.usage?.total_tokens || 0
+        }
+      };
+
+    } catch (error) {
+      console.error('GPT-4 API error details:', {
+        message: error.message,
+        status: error.status,
+        type: error.type,
+        code: error.code
+      });
+      
+      // Fall back to simple responses on any error
+      return this.generateFallbackResponse(userInput);
+    }
   }
 
   /**
