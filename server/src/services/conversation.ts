@@ -2,6 +2,7 @@ import OpenAI from 'openai';
 import { appConfig } from '@/config';
 import { redis } from './redis';
 import { knowledgeService } from './knowledge';
+import { bookingService, BookingRequest } from './booking';
 
 export interface ConversationContext {
   callSid: string;
@@ -14,9 +15,12 @@ export interface ConversationContext {
     email?: string;
     preferredService?: string;
     preferredTime?: string;
+    preferredDate?: string;
   };
   businessContext: BusinessContext;
   knowledgeUsed: string[];
+  bookingInProgress?: boolean;
+  bookingRequest?: BookingRequest;
   startTime: Date;
   lastActivity: Date;
 }
@@ -154,27 +158,37 @@ export class ConversationService {
     context.messages.push(userMessage);
     context.lastActivity = new Date();
 
-    // Generate response using GPT-4
-    const response = await this.generateGPTResponse(context, userInput);
+    // Detect intent early for booking processing
+    const detectedIntent = this.detectIntent(userInput);
+    
+    // Process booking flow if active or intent is booking
+    let bookingResponse = null;
+    if (context.bookingInProgress || detectedIntent === 'booking') {
+      const extractedInfo = this.extractCustomerInfo(userInput, detectedIntent);
+      bookingResponse = await this.processBookingFlow(context, userInput, extractedInfo);
+    }
+
+    // Generate response using GPT-4 (or use booking response)
+    const finalResponse = bookingResponse || await this.generateGPTResponse(context, userInput);
 
     // Add assistant response to conversation
     const assistantMessage: ConversationMessage = {
       role: 'assistant',
-      content: response.message,
+      content: finalResponse.message,
       timestamp: new Date()
     };
     context.messages.push(assistantMessage);
 
     // Update intent and extracted info
-    context.intent = response.intent as any;
-    if (response.extractedInfo) {
-      context.customerInfo = { ...context.customerInfo, ...response.extractedInfo };
+    context.intent = finalResponse.intent as any;
+    if (finalResponse.extractedInfo) {
+      context.customerInfo = { ...context.customerInfo, ...finalResponse.extractedInfo };
     }
 
     // Save updated context
     await redis.set(`conversation:${callSid}`, JSON.stringify(context), 3600);
 
-    return response;
+    return finalResponse;
   }
 
   /**
@@ -351,6 +365,114 @@ ${context.customerInfo?.preferredService ? `- Service interest: ${context.custom
   }
 
   /**
+   * Process booking flow and return appropriate response
+   */
+  private async processBookingFlow(context: ConversationContext, userInput: string, extractedInfo: Record<string, any>): Promise<GPTResponse | null> {
+    
+    // Initialize booking request if not already started
+    if (!context.bookingRequest) {
+      context.bookingRequest = {
+        tenantId: context.tenantId,
+        twilioCallSid: context.callSid
+      };
+      context.bookingInProgress = true;
+    }
+    
+    // Update booking request with extracted information
+    if (extractedInfo.name) {
+      context.bookingRequest.customerName = extractedInfo.name;
+    }
+    if (extractedInfo.phone) {
+      context.bookingRequest.customerPhone = extractedInfo.phone;
+    }
+    if (extractedInfo.email) {
+      context.bookingRequest.customerEmail = extractedInfo.email;
+    }
+    if (extractedInfo.preferredService) {
+      context.bookingRequest.serviceType = extractedInfo.preferredService;
+    }
+    if (extractedInfo.preferredTime) {
+      context.bookingRequest.preferredTime = extractedInfo.preferredTime;
+    }
+    if (extractedInfo.preferredDate) {
+      context.bookingRequest.preferredDate = extractedInfo.preferredDate;
+    }
+    
+    // Also update from conversation context customerInfo
+    if (context.customerInfo) {
+      if (context.customerInfo.name && !context.bookingRequest.customerName) {
+        context.bookingRequest.customerName = context.customerInfo.name;
+      }
+      if (context.customerInfo.phone && !context.bookingRequest.customerPhone) {
+        context.bookingRequest.customerPhone = context.customerInfo.phone;
+      }
+      if (context.customerInfo.email && !context.bookingRequest.customerEmail) {
+        context.bookingRequest.customerEmail = context.customerInfo.email;
+      }
+      if (context.customerInfo.preferredService && !context.bookingRequest.serviceType) {
+        context.bookingRequest.serviceType = context.customerInfo.preferredService;
+      }
+      if (context.customerInfo.preferredTime && !context.bookingRequest.preferredTime) {
+        context.bookingRequest.preferredTime = context.customerInfo.preferredTime;
+      }
+      if (context.customerInfo.preferredDate && !context.bookingRequest.preferredDate) {
+        context.bookingRequest.preferredDate = context.customerInfo.preferredDate;
+      }
+    }
+    
+    // Check if we have enough information to complete the booking
+    if (bookingService.isBookingComplete(context.bookingRequest)) {
+      try {
+        const booking = await bookingService.createBooking(context.bookingRequest);
+        const confirmationMessage = bookingService.generateBookingConfirmation(booking);
+        
+        // Reset booking state
+        context.bookingInProgress = false;
+        context.bookingRequest = undefined;
+        
+        return {
+          message: confirmationMessage,
+          intent: 'booking',
+          confidence: 1.0,
+          extractedInfo: {}
+        };
+      } catch (error) {
+        console.error('Failed to create booking:', error);
+        
+        // Reset booking state on error
+        context.bookingInProgress = false;
+        context.bookingRequest = undefined;
+        
+        return {
+          message: "I'm sorry, there was a technical issue processing your booking. Please try again, or I can transfer you to someone who can help you directly. What would you prefer?",
+          intent: 'booking',
+          confidence: 1.0,
+          extractedInfo: {}
+        };
+      }
+    }
+    
+    // Ask for missing information
+    const nextQuestion = bookingService.getNextBookingQuestion(context.bookingRequest);
+    if (nextQuestion) {
+      return {
+        message: nextQuestion,
+        intent: 'booking',
+        confidence: 1.0,
+        extractedInfo: {}
+      };
+    }
+    
+    // This shouldn't happen, but handle gracefully
+    return {
+      message: "Let me help you with your booking. What would you like to book?",
+      intent: 'booking',
+      confidence: 1.0,
+      extractedInfo: {}
+    };
+  }
+
+  /**
    * Detect user intent from input
    */
   private detectIntent(userInput: string): string {
@@ -401,19 +523,50 @@ ${context.customerInfo?.preferredService ? `- Service interest: ${context.custom
     
     // Extract service preferences for booking intent
     if (intent === 'booking') {
-      const serviceKeywords = ['consultation', 'cleaning', 'repair', 'check', 'treatment', 'appointment', 'service'];
-      for (const keyword of serviceKeywords) {
-        if (userInput.toLowerCase().includes(keyword)) {
-          extractedInfo.preferredService = keyword;
+      // Medical services
+      const medicalServices = ['consultation', 'checkup', 'appointment', 'treatment', 'exam', 'visit'];
+      // Electrician services  
+      const electricianServices = ['electrical', 'wiring', 'power', 'outlet', 'switch', 'emergency', 'repair'];
+      // Beauty services
+      const beautyServices = ['facial', 'massage', 'eyebrow', 'eyelash', 'nail', 'wax', 'beauty', 'treatment'];
+      
+      const allServices = [...medicalServices, ...electricianServices, ...beautyServices];
+      
+      for (const service of allServices) {
+        if (userInput.toLowerCase().includes(service)) {
+          extractedInfo.preferredService = service;
           break;
         }
       }
       
       // Extract time preferences
-      const timeMatch = userInput.match(/(?:at |around |about )([0-9]{1,2}(?::[0-9]{2})?\s?(?:am|pm|AM|PM)?)/i);
+      const timeMatch = userInput.match(/(?:at |around |about |for )([0-9]{1,2}(?::[0-9]{2})?\s?(?:am|pm|AM|PM)?)/i);
       if (timeMatch?.[1]) {
         extractedInfo.preferredTime = timeMatch[1].trim();
       }
+      
+      // Extract date preferences
+      const datePatterns = [
+        /(?:on |for )(today|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday)/i,
+        /(?:on |for )([0-9]{1,2}(?:st|nd|rd|th)?\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*)/i,
+        /(?:on |for )([0-9]{1,2}\/[0-9]{1,2}(?:\/[0-9]{2,4})?)/i
+      ];
+      
+      for (const pattern of datePatterns) {
+        const dateMatch = userInput.match(pattern);
+        if (dateMatch?.[1]) {
+          extractedInfo.preferredDate = dateMatch[1].trim();
+          break;
+        }
+      }
+    }
+    
+    // Also extract these for any intent (they might mention their name/phone anytime)
+    
+    // Extract just the first name if they say something like "Hi, this is John" 
+    const simpleNameMatch = userInput.match(/(?:hi|hello|g'day),?\s+(?:this is |i'm |it's )?([a-zA-Z]+)/i);
+    if (simpleNameMatch?.[1] && !extractedInfo.name) {
+      extractedInfo.name = simpleNameMatch[1].trim();
     }
     
     return extractedInfo;

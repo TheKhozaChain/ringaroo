@@ -5,6 +5,7 @@ import formbody from '@fastify/formbody';
 import { appConfig } from '@/config';
 import { db } from '@/services/database';
 import { redis } from '@/services/redis';
+import { bookingService } from '@/services/booking';
 import twilioRoutes from '@/routes/twilio';
 import actionsRoutes from '@/routes/actions';
 
@@ -101,6 +102,39 @@ async function buildApp() {
     } catch (error) {
       fastify.log.error('Error fetching dashboard stats:', error);
       reply.status(500).send({ error: 'Failed to fetch dashboard stats' });
+    }
+  });
+
+  // Get all bookings
+  fastify.get('/api/bookings', async (request, reply) => {
+    try {
+      // For demo, use the default tenant ID
+      const tenantId = '550e8400-e29b-41d4-a716-446655440000';
+      const bookings = await bookingService.getBookings(tenantId);
+      reply.send(bookings);
+    } catch (error) {
+      fastify.log.error('Error fetching bookings:', error);
+      reply.status(500).send({ error: 'Failed to fetch bookings' });
+    }
+  });
+
+  // Update booking status
+  fastify.patch('/api/bookings/:id', async (request, reply) => {
+    try {
+      const { id } = request.params as { id: string };
+      const { status, notes } = request.body as { status: 'pending' | 'confirmed' | 'cancelled', notes?: string };
+      
+      const updatedBooking = await bookingService.updateBookingStatus(id, status, notes);
+      
+      if (!updatedBooking) {
+        reply.status(404).send({ error: 'Booking not found' });
+        return;
+      }
+      
+      reply.send(updatedBooking);
+    } catch (error) {
+      fastify.log.error('Error updating booking:', error);
+      reply.status(500).send({ error: 'Failed to update booking' });
     }
   });
 
