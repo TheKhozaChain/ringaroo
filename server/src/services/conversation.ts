@@ -1,9 +1,11 @@
 import OpenAI from 'openai';
 import { appConfig } from '@/config';
 import { redis } from './redis';
+import { knowledgeService } from './knowledge';
 
 export interface ConversationContext {
   callSid: string;
+  tenantId: string;
   messages: ConversationMessage[];
   intent?: 'greeting' | 'booking' | 'inquiry' | 'hours' | 'services' | 'complaint' | 'goodbye';
   customerInfo?: {
@@ -14,6 +16,7 @@ export interface ConversationContext {
     preferredTime?: string;
   };
   businessContext: BusinessContext;
+  knowledgeUsed: string[];
   startTime: Date;
   lastActivity: Date;
 }
@@ -86,14 +89,16 @@ export class ConversationService {
   /**
    * Initialize a new conversation
    */
-  async initializeConversation(callSid: string, callerNumber?: string): Promise<ConversationContext> {
+  async initializeConversation(callSid: string, callerNumber?: string, tenantId: string = '550e8400-e29b-41d4-a716-446655440000'): Promise<ConversationContext> {
     const context: ConversationContext = {
       callSid,
+      tenantId,
       messages: [],
       businessContext: this.defaultBusinessContext,
       customerInfo: {
         phone: callerNumber
       },
+      knowledgeUsed: [],
       startTime: new Date(),
       lastActivity: new Date()
     };
@@ -116,7 +121,7 @@ export class ConversationService {
     // Convert date strings back to Date objects
     context.startTime = new Date(context.startTime);
     context.lastActivity = new Date(context.lastActivity);
-    context.messages = context.messages.map(msg => ({
+    context.messages = context.messages.map((msg: any) => ({
       ...msg,
       timestamp: new Date(msg.timestamp)
     }));
@@ -127,11 +132,16 @@ export class ConversationService {
   /**
    * Process user input and generate intelligent response
    */
-  async processUserInput(callSid: string, userInput: string, confidence: number = 1.0): Promise<GPTResponse> {
+  async processUserInput(callSid: string, userInput: string, confidence: number = 1.0, tenantId?: string): Promise<GPTResponse> {
     let context = await this.getConversation(callSid);
     
     if (!context) {
-      context = await this.initializeConversation(callSid);
+      context = await this.initializeConversation(callSid, undefined, tenantId);
+    }
+    
+    // Ensure tenantId is set (for backward compatibility)
+    if (!context.tenantId && tenantId) {
+      context.tenantId = tenantId;
     }
 
     // Add user message to conversation
@@ -180,7 +190,30 @@ export class ConversationService {
     try {
       console.log('Attempting GPT-4 API call with key:', appConfig.openaiApiKey?.substring(0, 20) + '...');
       
-      const systemPrompt = this.buildSystemPrompt(context);
+      // Detect intent first for knowledge search
+      const detectedIntent = this.detectIntent(userInput);
+      
+      // Search for relevant knowledge
+      let relevantKnowledge: string | null = null;
+      if (context.tenantId) {
+        try {
+          relevantKnowledge = await knowledgeService.getContextualKnowledge(
+            context.tenantId,
+            detectedIntent,
+            userInput,
+            context
+          );
+          
+          if (relevantKnowledge) {
+            context.knowledgeUsed.push(relevantKnowledge.substring(0, 100) + '...');
+            console.log('Using knowledge base information in response');
+          }
+        } catch (error) {
+          console.error('Knowledge search failed:', error);
+        }
+      }
+      
+      const systemPrompt = this.buildSystemPrompt(context, relevantKnowledge);
       const messages = [
         { role: 'system' as const, content: systemPrompt },
         ...context.messages.slice(-8).map(msg => ({
@@ -207,26 +240,13 @@ export class ConversationService {
       
       const message = response.message?.content || "G'day! How can I help you today?";
       
-      // Simple intent detection based on user input (not GPT response)
-      let intent = 'inquiry';
-      let extractedInfo = {};
-      let confidence = 0.8;
-
-      const userInputLower = userInput.toLowerCase();
-      if (userInputLower.includes('book') || userInputLower.includes('appointment')) {
-        intent = 'booking';
-      } else if (userInputLower.includes('hour') || userInputLower.includes('open')) {
-        intent = 'hours';
-      } else if (userInputLower.includes('service') || userInputLower.includes('offer')) {
-        intent = 'services';
-      } else if (userInputLower.includes('bye') || userInputLower.includes('thank')) {
-        intent = 'goodbye';
-      }
+      // Extract customer information from the conversation
+      let extractedInfo = this.extractCustomerInfo(userInput, detectedIntent);
 
       return {
         message,
-        intent,
-        confidence,
+        intent: detectedIntent,
+        confidence: 0.8,
         extractedInfo,
         tokenUsage: {
           promptTokens: completion.usage?.prompt_tokens || 0,
@@ -235,7 +255,7 @@ export class ConversationService {
         }
       };
 
-    } catch (error) {
+    } catch (error: any) {
       console.error('GPT-4 API error details:', {
         message: error.message,
         status: error.status,
@@ -251,8 +271,18 @@ export class ConversationService {
   /**
    * Build system prompt based on business context and conversation state
    */
-  private buildSystemPrompt(context: ConversationContext): string {
+  private buildSystemPrompt(context: ConversationContext, relevantKnowledge?: string | null): string {
     const business = context.businessContext;
+    
+    let knowledgeSection = '';
+    if (relevantKnowledge) {
+      knowledgeSection = `
+
+**Relevant Business Information:**
+${relevantKnowledge}
+
+**Important:** Use the above information to answer the customer's question accurately. This information is specific to our business and should take priority over general knowledge.`;
+    }
     
     return `You are Johnno, a friendly Australian AI receptionist for ${business.businessName}.
 
@@ -271,7 +301,7 @@ export class ConversationService {
 **Hours:**
 Monday-Friday: ${business.hours.monday}
 Saturday: ${business.hours.saturday}
-Sunday: ${business.hours.sunday}
+Sunday: ${business.hours.sunday}${knowledgeSection}
 
 **Guidelines:**
 - For bookings: Ask for name, preferred service, and time
@@ -318,6 +348,75 @@ ${context.customerInfo?.preferredService ? `- Service interest: ${context.custom
       intent,
       confidence: 0.8
     };
+  }
+
+  /**
+   * Detect user intent from input
+   */
+  private detectIntent(userInput: string): string {
+    const input = userInput.toLowerCase();
+    
+    if (input.includes('hello') || input.includes('hi') || input.includes('g\'day')) {
+      return 'greeting';
+    } else if (input.includes('book') || input.includes('appointment') || input.includes('schedule')) {
+      return 'booking';
+    } else if (input.includes('hour') || input.includes('open') || input.includes('close') || input.includes('time')) {
+      return 'hours';
+    } else if (input.includes('service') || input.includes('offer') || input.includes('what do you') || input.includes('help with')) {
+      return 'services';
+    } else if (input.includes('price') || input.includes('cost') || input.includes('charge') || input.includes('fee')) {
+      return 'pricing';
+    } else if (input.includes('thank') || input.includes('bye') || input.includes('goodbye')) {
+      return 'goodbye';
+    } else if (input.includes('complain') || input.includes('problem') || input.includes('issue') || input.includes('unhappy')) {
+      return 'complaint';
+    } else {
+      return 'inquiry';
+    }
+  }
+
+  /**
+   * Extract customer information from user input
+   */
+  private extractCustomerInfo(userInput: string, intent: string): Record<string, any> {
+    const extractedInfo: Record<string, any> = {};
+    
+    // Extract name patterns
+    const nameMatch = userInput.match(/(?:my name is|i'm|i am|this is) ([a-zA-Z\s]+)/i);
+    if (nameMatch?.[1]) {
+      extractedInfo.name = nameMatch[1].trim();
+    }
+    
+    // Extract phone patterns
+    const phoneMatch = userInput.match(/(\+?[0-9\s\-\(\)]{8,})/);
+    if (phoneMatch?.[1]) {
+      extractedInfo.phone = phoneMatch[1].trim();
+    }
+    
+    // Extract email patterns
+    const emailMatch = userInput.match(/([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/);
+    if (emailMatch?.[1]) {
+      extractedInfo.email = emailMatch[1].trim();
+    }
+    
+    // Extract service preferences for booking intent
+    if (intent === 'booking') {
+      const serviceKeywords = ['consultation', 'cleaning', 'repair', 'check', 'treatment', 'appointment', 'service'];
+      for (const keyword of serviceKeywords) {
+        if (userInput.toLowerCase().includes(keyword)) {
+          extractedInfo.preferredService = keyword;
+          break;
+        }
+      }
+      
+      // Extract time preferences
+      const timeMatch = userInput.match(/(?:at |around |about )([0-9]{1,2}(?::[0-9]{2})?\s?(?:am|pm|AM|PM)?)/i);
+      if (timeMatch?.[1]) {
+        extractedInfo.preferredTime = timeMatch[1].trim();
+      }
+    }
+    
+    return extractedInfo;
   }
 
   /**

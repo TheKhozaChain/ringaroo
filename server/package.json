@@ -14,7 +14,8 @@
     "lint:fix": "eslint src --ext .ts --fix",
     "call-demo": "tsx src/scripts/call-demo.ts",
     "migrate": "tsx src/scripts/migrate.ts",
-    "seed": "tsx src/scripts/seed.ts"
+    "seed": "tsx src/scripts/seed.ts",
+    "setup-knowledge": "tsx src/scripts/setup-knowledge-bases.ts"
   },
   "dependencies": {
     "@fastify/cors": "^11.0.1",

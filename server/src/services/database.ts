@@ -1,6 +1,7 @@
 import { Pool, PoolClient } from 'pg';
 import { appConfig } from '@/config';
 import type { Tenant, Call, Booking, KnowledgeChunk } from '@/types';
+import { embeddingsService } from './embeddings';
 
 class DatabaseService {
   private pool: Pool;
@@ -143,19 +144,44 @@ class DatabaseService {
   }
 
   // Knowledge operations
-  async searchKnowledge(tenantId: string, query: string, limit = 5): Promise<KnowledgeChunk[]> {
-    // This would typically use vector similarity search
-    // For now, we'll use basic text search as a fallback
-    const result = await this.query<KnowledgeChunk>(
-      `SELECT id, tenant_id, content, token_count, metadata, created_at
-       FROM ringaroo.knowledge_chunks 
-       WHERE tenant_id = $1 
-       AND content ILIKE $2
-       ORDER BY created_at DESC
-       LIMIT $3`,
-      [tenantId, `%${query}%`, limit]
-    );
-    return result;
+  async searchKnowledge(tenantId: string, query: string, limit = 5, similarityThreshold = 0.7): Promise<Array<KnowledgeChunk & { similarity?: number }>> {
+    try {
+      console.log(`Searching knowledge for tenant ${tenantId} with query: "${query}"`);
+      
+      // Generate embedding for the search query
+      const { embedding: queryEmbedding } = await embeddingsService.generateEmbedding(query);
+      
+      // Use vector similarity search with cosine distance
+      const result = await this.query<KnowledgeChunk & { similarity: number }>(
+        `SELECT 
+           id, tenant_id, content, token_count, metadata, created_at,
+           1 - (embedding <=> $2::vector) AS similarity
+         FROM ringaroo.knowledge_chunks 
+         WHERE tenant_id = $1 
+         AND (1 - (embedding <=> $2::vector)) >= $3
+         ORDER BY embedding <=> $2::vector
+         LIMIT $4`,
+        [tenantId, JSON.stringify(queryEmbedding), similarityThreshold, limit]
+      );
+
+      console.log(`Found ${result.length} knowledge chunks with similarity >= ${similarityThreshold}`);
+      return result;
+
+    } catch (error) {
+      console.error('Vector search failed, falling back to text search:', error);
+      
+      // Fallback to basic text search if vector search fails
+      const result = await this.query<KnowledgeChunk>(
+        `SELECT id, tenant_id, content, token_count, metadata, created_at
+         FROM ringaroo.knowledge_chunks 
+         WHERE tenant_id = $1 
+         AND content ILIKE $2
+         ORDER BY created_at DESC
+         LIMIT $3`,
+        [tenantId, `%${query}%`, limit]
+      );
+      return result;
+    }
   }
 
   async getKnowledgeByTenant(tenantId: string): Promise<KnowledgeChunk[]> {
@@ -172,21 +198,100 @@ class DatabaseService {
     chunk: Omit<KnowledgeChunk, 'id' | 'createdAt'>,
     sourceId: string
   ): Promise<KnowledgeChunk> {
-    const result = await this.query<KnowledgeChunk>(
-      `INSERT INTO ringaroo.knowledge_chunks 
-       (knowledge_source_id, tenant_id, content, embedding, token_count, metadata)
-       VALUES ($1, $2, $3, $4, $5, $6)
-       RETURNING *`,
-      [
-        sourceId,
-        chunk.tenantId,
-        chunk.content,
-        chunk.embedding ? JSON.stringify(chunk.embedding) : null,
-        chunk.tokenCount,
-        JSON.stringify(chunk.metadata),
-      ]
+    try {
+      console.log(`Adding knowledge chunk: "${chunk.content.substring(0, 100)}..."`);
+      
+      // Generate embedding if not provided
+      let embedding = chunk.embedding;
+      let tokenCount = chunk.tokenCount;
+      
+      if (!embedding) {
+        const embeddingResult = await embeddingsService.generateEmbedding(chunk.content);
+        embedding = embeddingResult.embedding;
+        tokenCount = embeddingResult.tokenCount;
+      }
+
+      const result = await this.query<KnowledgeChunk>(
+        `INSERT INTO ringaroo.knowledge_chunks 
+         (knowledge_source_id, tenant_id, content, embedding, token_count, metadata)
+         VALUES ($1, $2, $3, $4::vector, $5, $6)
+         RETURNING *`,
+        [
+          sourceId,
+          chunk.tenantId,
+          chunk.content,
+          JSON.stringify(embedding),
+          tokenCount,
+          JSON.stringify(chunk.metadata || {}),
+        ]
+      );
+      
+      console.log(`Successfully added knowledge chunk with embedding`);
+      return result[0]!;
+      
+    } catch (error) {
+      console.error('Failed to add knowledge chunk:', error);
+      throw error;
+    }
+  }
+
+  // Knowledge source management
+  async createKnowledgeSource(
+    tenantId: string, 
+    type: 'url' | 'text', 
+    source: string
+  ): Promise<string> {
+    const result = await this.query<{ id: string }>(
+      `INSERT INTO ringaroo.knowledge_sources 
+       (tenant_id, type, source, status)
+       VALUES ($1, $2, $3, 'pending')
+       RETURNING id`,
+      [tenantId, type, source]
     );
-    return result[0]!;
+    return result[0]!.id;
+  }
+
+  async updateKnowledgeSourceStatus(
+    sourceId: string, 
+    status: 'pending' | 'processing' | 'completed' | 'failed',
+    errorMessage?: string
+  ): Promise<void> {
+    await this.query(
+      `UPDATE ringaroo.knowledge_sources 
+       SET status = $2, last_crawled_at = NOW(), error_message = $3, updated_at = NOW()
+       WHERE id = $1`,
+      [sourceId, status, errorMessage || null]
+    );
+  }
+
+  // Bulk operations for knowledge ingestion
+  async addKnowledgeChunks(
+    chunks: Array<Omit<KnowledgeChunk, 'id' | 'createdAt'>>,
+    sourceId: string
+  ): Promise<KnowledgeChunk[]> {
+    const results: KnowledgeChunk[] = [];
+    
+    // Process in batches to avoid overwhelming the database
+    const batchSize = 10;
+    for (let i = 0; i < chunks.length; i += batchSize) {
+      const batch = chunks.slice(i, i + batchSize);
+      const batchResults = await Promise.all(
+        batch.map(chunk => this.addKnowledgeChunk(chunk, sourceId))
+      );
+      results.push(...batchResults);
+      console.log(`Processed batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(chunks.length / batchSize)}`);
+    }
+    
+    return results;
+  }
+
+  // Clear knowledge for a tenant (useful for updates)
+  async clearTenantKnowledge(tenantId: string): Promise<void> {
+    await this.query(
+      'DELETE FROM ringaroo.knowledge_chunks WHERE tenant_id = $1',
+      [tenantId]
+    );
+    console.log(`Cleared all knowledge for tenant ${tenantId}`);
   }
 
   async close(): Promise<void> {
