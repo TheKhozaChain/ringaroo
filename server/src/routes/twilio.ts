@@ -32,16 +32,13 @@ const twilioRoutes: FastifyPluginAsync = async function (fastify) {
       fastify.log.info('Conversation initialized', { CallSid, From });
 
       // Return TwiML with speech recognition
-      const webhookUrl = process.env.WEBHOOK_BASE_URL || `https://${request.headers.host}`;
+      const webhookUrl = `https://${request.headers.host}`;
       const gatherUrl = webhookUrl + '/twilio/gather';
       
       const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Say voice="man">
-        G'day! Thanks for calling. I'm Johnno, your AI assistant. How can I help you today?
-    </Say>
-    <Gather input="speech" timeout="5" speechTimeout="auto" action="${gatherUrl}">
-        <Say voice="man">Please tell me what you need.</Say>
+    <Gather input="speech" timeout="10" speechTimeout="3" action="${gatherUrl}">
+        <Say voice="man">G'day! Thanks for calling. I'm Johnno, your AI assistant. How can I help you today?</Say>
     </Gather>
     <Say voice="man">Sorry, I didn't hear you. Goodbye!</Say>
     <Hangup/>
@@ -49,13 +46,13 @@ const twilioRoutes: FastifyPluginAsync = async function (fastify) {
 
       fastify.log.debug('Sending TwiML response', { CallSid });
       reply.type('text/xml').send(twiml);
-    } catch (error) {
+    } catch (error: any) {
       fastify.log.error('Error handling incoming call:', {
         error: error.message,
         stack: error.stack,
-        CallSid,
-        From,
-        To
+        CallSid: (request.body as any)?.CallSid,
+        From: (request.body as any)?.From,
+        To: (request.body as any)?.To
       });
       
       // Return error TwiML
@@ -143,7 +140,7 @@ const twilioRoutes: FastifyPluginAsync = async function (fastify) {
             continueConversation = false;
           }
           
-        } catch (gptError) {
+        } catch (gptError: any) {
           console.error('DETAILED ERROR:', gptError);
           fastify.log.error('Conversation service error:', {
             error: gptError.message,
@@ -167,15 +164,30 @@ const twilioRoutes: FastifyPluginAsync = async function (fastify) {
       let responseTwiml;
       
       if (continueConversation) {
-        responseTwiml = `<?xml version="1.0" encoding="UTF-8"?>
+        // Only add follow-up prompt if the response doesn't already include a question
+        const hasQuestion = responseText.includes('?') || responseText.toLowerCase().includes('can i') || responseText.toLowerCase().includes('would you like');
+        
+        if (hasQuestion) {
+          // Response already has a question, just listen for answer
+          responseTwiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Say voice="man">${responseText.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</Say>
-    <Gather input="speech" timeout="5" speechTimeout="auto" action="${gatherUrl}">
-        <Say voice="man">Is there anything else I can help you with?</Say>
+    <Gather input="speech" timeout="10" speechTimeout="3" action="${gatherUrl}">
+        <Say voice="man">${responseText.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</Say>
     </Gather>
     <Say voice="man">Thanks for calling! Have a great day!</Say>
     <Hangup/>
 </Response>`;
+        } else {
+          // Response is a statement, add a subtle follow-up
+          responseTwiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Say voice="man">${responseText.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</Say>
+    <Gather input="speech" timeout="10" speechTimeout="3" action="${gatherUrl}">
+    </Gather>
+    <Say voice="man">Thanks for calling! Have a great day!</Say>
+    <Hangup/>
+</Response>`;
+        }
       } else {
         responseTwiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
@@ -188,7 +200,7 @@ const twilioRoutes: FastifyPluginAsync = async function (fastify) {
       
       reply.type('text/xml').send(responseTwiml);
       
-    } catch (error) {
+    } catch (error: any) {
       fastify.log.error('Error in gather endpoint:', {
         error: error.message,
         stack: error.stack,

@@ -6,7 +6,7 @@ import { appConfig } from '@/config';
 import { db } from '@/services/database';
 import { redis } from '@/services/redis';
 import { bookingService } from '@/services/booking';
-import twilioRoutes from '@/routes/twilio';
+import twilioRobustRoutes from '@/routes/twilio-robust';
 import actionsRoutes from '@/routes/actions';
 
 const fastify = Fastify({
@@ -18,8 +18,33 @@ const fastify = Fastify({
         colorize: true,
         translateTime: 'HH:MM:ss Z',
         ignore: 'pid,hostname',
+        levelFirst: true,
+        messageFormat: '[CONVERSATION] {msg}',
+        timestampKey: 'time',
       },
     } : undefined,
+    serializers: {
+      req: (req: any) => ({
+        method: req.method,
+        url: req.url,
+        headers: {
+          host: req.headers.host,
+          'user-agent': req.headers['user-agent'],
+          'content-type': req.headers['content-type']
+        },
+        remoteAddress: req.socket?.remoteAddress,
+        remotePort: req.socket?.remotePort
+      }),
+      res: (res: any) => ({
+        statusCode: res.statusCode,
+        headers: res.headers
+      }),
+      err: (err: any) => ({
+        type: err.constructor.name,
+        message: err.message,
+        stack: err.stack
+      })
+    }
   },
 });
 
@@ -139,7 +164,7 @@ async function buildApp() {
   });
 
   // Register route plugins
-  await fastify.register(twilioRoutes);
+  await fastify.register(twilioRobustRoutes);
   await fastify.register(actionsRoutes);
 
   return fastify;

@@ -9,7 +9,7 @@ export interface TTSService {
 export class AzureTTSService implements TTSService {
   private readonly apiKey: string;
   private readonly region: string;
-  private readonly voiceName: string = 'en-AU-NatashaNeural'; // Australian female voice
+  private readonly voiceName: string = 'en-AU-WilliamNeural'; // Australian male voice for Johnno
 
   constructor() {
     this.apiKey = appConfig.azureSpeechKey || '';
@@ -31,13 +31,15 @@ export class AzureTTSService implements TTSService {
 
       const accessToken = tokenResponse.data;
 
-      // SSML for speech synthesis
+      // Enhanced SSML for more natural speech synthesis
       const ssml = `
-        <speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='en-AU'>
+        <speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xmlns:mstts='https://www.w3.org/2001/mstts' xml:lang='en-AU'>
           <voice name='${this.voiceName}'>
-            <prosody rate='medium' pitch='medium'>
-              ${text}
-            </prosody>
+            <mstts:express-as style='friendly' styledegree='0.8'>
+              <prosody rate='0.9' pitch='+5%' contour='(20%,+10Hz) (40%,+5Hz) (60%,-5Hz) (80%,+8Hz)'>
+                ${text}
+              </prosody>
+            </mstts:express-as>
           </voice>
         </speak>
       `;
@@ -76,10 +78,12 @@ export class ElevenLabsTTSService implements TTSService {
     try {
       const response = await axios.post(url, {
         text,
-        model_id: 'eleven_monolingual_v1',
+        model_id: 'eleven_turbo_v2', // Faster, more natural model
         voice_settings: {
-          stability: 0.5,
-          similarity_boost: 0.75,
+          stability: 0.35, // Lower for more natural variation
+          similarity_boost: 0.85, // Higher for better voice consistency
+          style: 0.2, // Add slight style variation
+          use_speaker_boost: true, // Enhance naturalness
         },
       }, {
         headers: {

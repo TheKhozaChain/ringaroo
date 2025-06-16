@@ -65,6 +65,7 @@ export interface GPTResponse {
 export class ConversationService {
   private openai: OpenAI;
   private defaultBusinessContext: BusinessContext;
+  private responseCache: Map<string, { response: GPTResponse; timestamp: number }> = new Map();
 
   constructor() {
     this.openai = new OpenAI({
@@ -201,22 +202,46 @@ export class ConversationService {
       return this.generateFallbackResponse(userInput);
     }
 
+    // Check cache first for common queries
+    const cacheKey = this.getCacheKey(userInput, context);
+    const cached = this.responseCache.get(cacheKey);
+    if (cached && Date.now() - cached.timestamp < 300000) { // 5 minute cache
+      console.log('Using cached response for similar query');
+      return { ...cached.response };
+    }
+
     try {
       console.log('Attempting GPT-4 API call with key:', appConfig.openaiApiKey?.substring(0, 20) + '...');
       
       // Detect intent first for knowledge search
       const detectedIntent = this.detectIntent(userInput);
       
-      // Search for relevant knowledge
+      // Search for relevant knowledge only for specific intents with timeout
       let relevantKnowledge: string | null = null;
-      if (context.tenantId) {
+      const knowledgeIntents = ['hours', 'services', 'inquiry', 'pricing'];
+      
+      if (context.tenantId && knowledgeIntents.includes(detectedIntent)) {
         try {
-          relevantKnowledge = await knowledgeService.getContextualKnowledge(
-            context.tenantId,
-            detectedIntent,
-            userInput,
-            context
-          );
+          const knowledgeStartTime = Date.now();
+          
+          // Add timeout to knowledge search to prevent long delays
+          relevantKnowledge = await Promise.race([
+            knowledgeService.getContextualKnowledge(
+              context.tenantId,
+              detectedIntent,
+              userInput,
+              context
+            ),
+            new Promise<null>((resolve) => 
+              setTimeout(() => {
+                console.log('Knowledge search timed out after 5 seconds');
+                resolve(null);
+              }, 5000)
+            )
+          ]);
+          
+          const knowledgeTime = Date.now() - knowledgeStartTime;
+          console.log(`Knowledge search completed in ${knowledgeTime}ms`);
           
           if (relevantKnowledge) {
             context.knowledgeUsed.push(relevantKnowledge.substring(0, 100) + '...');
@@ -224,7 +249,10 @@ export class ConversationService {
           }
         } catch (error) {
           console.error('Knowledge search failed:', error);
+          // Continue without knowledge - don't block the conversation
         }
+      } else {
+        console.log(`Skipping knowledge search for intent: ${detectedIntent}`);
       }
       
       const systemPrompt = this.buildSystemPrompt(context, relevantKnowledge);
@@ -238,12 +266,17 @@ export class ConversationService {
 
       console.log('Sending request to OpenAI with', messages.length, 'messages');
 
-      const completion = await this.openai.chat.completions.create({
-        model: appConfig.openaiModel || 'gpt-4',
-        messages,
-        temperature: 0.7,
-        max_tokens: 150,
-      });
+      const completion = await Promise.race([
+        this.openai.chat.completions.create({
+          model: appConfig.openaiModel || 'gpt-4',
+          messages,
+          temperature: 0.7,
+          max_tokens: 150,
+        }),
+        new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('GPT-4 API timeout after 15 seconds')), 15000)
+        )
+      ]) as any;
 
       console.log('OpenAI API response received successfully');
 
@@ -257,7 +290,7 @@ export class ConversationService {
       // Extract customer information from the conversation
       let extractedInfo = this.extractCustomerInfo(userInput, detectedIntent);
 
-      return {
+      const gptResponse = {
         message,
         intent: detectedIntent,
         confidence: 0.8,
@@ -268,6 +301,14 @@ export class ConversationService {
           totalTokens: completion.usage?.total_tokens || 0
         }
       };
+
+      // Cache the response for similar future queries
+      this.responseCache.set(cacheKey, {
+        response: gptResponse,
+        timestamp: Date.now()
+      });
+
+      return gptResponse;
 
     } catch (error: any) {
       console.error('GPT-4 API error details:', {
@@ -321,7 +362,8 @@ Sunday: ${business.hours.sunday}${knowledgeSection}
 - For bookings: Ask for name, preferred service, and time
 - Be natural and conversational, not robotic
 - If you can't help, offer to transfer or take a message
-- Always end with asking how else you can help
+- Only ask if you can help with anything else when the current conversation is clearly finished
+- Avoid repeating the same questions or service offerings
 
 **Current conversation context:**
 ${context.intent ? `- Current intent: ${context.intent}` : ''}
@@ -373,7 +415,9 @@ ${context.customerInfo?.preferredService ? `- Service interest: ${context.custom
     if (!context.bookingRequest) {
       context.bookingRequest = {
         tenantId: context.tenantId,
-        twilioCallSid: context.callSid
+        twilioCallSid: context.callSid,
+        // Pre-populate with caller's phone number from Twilio
+        customerPhone: context.customerInfo?.phone
       };
       context.bookingInProgress = true;
     }
@@ -381,6 +425,9 @@ ${context.customerInfo?.preferredService ? `- Service interest: ${context.custom
     // Update booking request with extracted information
     if (extractedInfo.name) {
       context.bookingRequest.customerName = extractedInfo.name;
+      console.log(`📝 Updated booking request with name: "${extractedInfo.name}"`);
+    } else {
+      console.log(`❌ No name extracted, booking request not updated. Current name: "${context.bookingRequest.customerName || 'NONE'}"`);
     }
     if (extractedInfo.phone) {
       context.bookingRequest.customerPhone = extractedInfo.phone;
@@ -503,10 +550,43 @@ ${context.customerInfo?.preferredService ? `- Service interest: ${context.custom
   private extractCustomerInfo(userInput: string, intent: string): Record<string, any> {
     const extractedInfo: Record<string, any> = {};
     
-    // Extract name patterns
-    const nameMatch = userInput.match(/(?:my name is|i'm|i am|this is) ([a-zA-Z\s]+)/i);
+    // Extract name patterns (multiple approaches)
+    let nameMatch = userInput.match(/(?:my name is|i'm|i am|this is|call me)\s+([a-zA-Z\s]+?)(?:[.!?]|$)/i);
+    
+    // If no formal introduction, try to detect if it's just a name
+    if (!nameMatch) {
+      // Clean input by removing punctuation for better matching
+      const cleanInput = userInput.replace(/[.!?]/g, '').trim();
+      
+      // Look for simple name patterns (first and last name)
+      const namePattern = /\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\b/;
+      const possibleNameMatch = cleanInput.match(namePattern);
+      
+      if (possibleNameMatch?.[1]) {
+        const possibleName = possibleNameMatch[1];
+        // Avoid false positives - skip if it contains common non-name words
+        const excludeWords = ['appointment', 'booking', 'want', 'need', 'like', 'please', 'thank', 'help', 'service'];
+        const containsExcluded = excludeWords.some(word => possibleName.toLowerCase().includes(word));
+        
+        if (!containsExcluded) {
+          nameMatch = [possibleNameMatch[0], possibleName];
+        }
+      }
+      
+      // If still no match, try very simple pattern for just the input being a name
+      if (!nameMatch && /^[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*[.!?]?$/.test(userInput.trim())) {
+        const simpleName = userInput.replace(/[.!?]/g, '').trim();
+        if (simpleName.split(' ').length >= 2) {
+          nameMatch = [simpleName, simpleName];
+        }
+      }
+    }
+    
     if (nameMatch?.[1]) {
       extractedInfo.name = nameMatch[1].trim();
+      console.log(`✅ Extracted name: "${extractedInfo.name}" from input: "${userInput}"`);
+    } else {
+      console.log(`❌ Could not extract name from input: "${userInput}"`);
     }
     
     // Extract phone patterns
@@ -570,6 +650,15 @@ ${context.customerInfo?.preferredService ? `- Service interest: ${context.custom
     }
     
     return extractedInfo;
+  }
+
+  /**
+   * Generate cache key for response caching
+   */
+  private getCacheKey(userInput: string, context: ConversationContext): string {
+    const intent = this.detectIntent(userInput);
+    const normalizedInput = userInput.toLowerCase().trim().substring(0, 50);
+    return `${intent}:${normalizedInput}:${context.businessContext.businessType}`;
   }
 
   /**

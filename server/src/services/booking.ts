@@ -146,10 +146,15 @@ export class BookingService {
       new Date(preferredDate).toLocaleDateString('en-AU') : 'to be confirmed';
     const timeStr = preferredTime || 'to be confirmed';
     
+    const customerPhone = (booking as any).customer_phone || booking.customerPhone;
+    
+    // Sanitize phone number for display
+    const displayPhone = this.sanitizePhoneForDisplay(customerPhone);
+    
     return `Perfect! I've got your booking request:
     
 Name: ${(booking as any).customer_name || booking.customerName}
-Phone: ${(booking as any).customer_phone || booking.customerPhone}
+Phone: ${displayPhone}
 Service: ${(booking as any).service_type || booking.serviceType}
 Preferred Date: ${dateStr}
 Preferred Time: ${timeStr}
@@ -282,6 +287,42 @@ We'll send you a confirmation email shortly and someone will call you to confirm
     }
     
     return await db.updateBooking(bookingId, updates);
+  }
+  
+  /**
+   * Sanitize phone number for safe display and speech
+   */
+  private sanitizePhoneForDisplay(phone: string | null | undefined): string {
+    if (!phone || typeof phone !== 'string') {
+      return 'to be confirmed';
+    }
+    
+    // Check for numeric overflow or invalid formats
+    if (phone.toLowerCase().includes('infinity') || 
+        phone.toLowerCase().includes('billion') ||
+        phone.toLowerCase().includes('e+') ||
+        phone.length > 20) {
+      console.log(`⚠️ WARNING: Invalid phone number detected: ${phone}`);
+      return 'to be confirmed';
+    }
+    
+    // Format phone number for better TTS pronunciation
+    // Convert +61419605668 to "plus 6 1 4 1 9 6 0 5 6 6 8" for clearer speech
+    if (phone.startsWith('+61')) {
+      const digits = phone.substring(3); // Remove +61
+      const formattedDigits = digits.split('').join(' '); // Space between each digit
+      return `plus 6 1 ${formattedDigits}`;
+    }
+    
+    // For other formats, space out all digits
+    const cleaned = phone.replace(/[^\d+]/g, '');
+    if (cleaned.startsWith('+')) {
+      const digits = cleaned.substring(1);
+      const formattedDigits = digits.split('').join(' ');
+      return `plus ${formattedDigits}`;
+    }
+    
+    return cleaned.split('').join(' ') || 'to be confirmed';
   }
 }
 
