@@ -163,6 +163,47 @@ async function buildApp() {
     }
   });
 
+  // Audio file serving endpoint for TTS
+  fastify.get('/audio/:filename', async (request, reply) => {
+    try {
+      const { filename } = request.params as { filename: string };
+      
+      // Validate filename to prevent directory traversal
+      if (!/^[a-zA-Z0-9_\-\.]+\.mp3$/.test(filename)) {
+        reply.status(400).send({ error: 'Invalid filename' });
+        return;
+      }
+      
+      const audioPath = require('path').join(process.cwd(), 'temp', 'audio', filename);
+      
+      // Check if file exists and get stats
+      let stats;
+      try {
+        stats = await require('fs/promises').stat(audioPath);
+      } catch (error) {
+        fastify.log.error(`Audio file not found: ${audioPath}`, error);
+        reply.status(404).send({ error: 'Audio file not found' });
+        return;
+      }
+      
+      // Set proper headers
+      reply.type('audio/mpeg');
+      reply.header('Content-Length', stats.size);
+      reply.header('Accept-Ranges', 'bytes');
+      reply.header('Cache-Control', 'public, max-age=3600');
+      
+      // Read and send file content
+      const fileContent = await require('fs/promises').readFile(audioPath);
+      reply.send(fileContent);
+      
+      fastify.log.info(`Served audio file: ${filename} (${stats.size} bytes)`);
+      
+    } catch (error) {
+      fastify.log.error('Error serving audio file:', error);
+      reply.status(500).send({ error: 'Failed to serve audio file' });
+    }
+  });
+
   // Register route plugins
   await fastify.register(twilioRobustRoutes);
   await fastify.register(actionsRoutes);

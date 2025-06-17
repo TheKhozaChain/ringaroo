@@ -1,4 +1,5 @@
 import { CallState } from './call-state';
+import { ttsCacheManager, ttsAudioManager } from './tts';
 
 export interface TwiMLOptions {
   message: string;
@@ -8,6 +9,8 @@ export interface TwiMLOptions {
   retryMessage?: string;
   maxRetries?: number;
   action: string;
+  callId?: string;
+  useAdvancedTTS?: boolean;
 }
 
 export class TwiMLGenerator {
@@ -25,44 +28,94 @@ export class TwiMLGenerator {
       timeout = this.DEFAULT_TIMEOUT,
       speechTimeout = this.DEFAULT_SPEECH_TIMEOUT,
       retryMessage = "Sorry, I didn't hear you. Could you please repeat that?",
-      action
+      action,
+      callId,
+      useAdvancedTTS = true
     } = options;
 
-    // Sanitize message for XML
-    const sanitizedMessage = this.sanitizeForXML(message);
-    const sanitizedRetryMessage = this.sanitizeForXML(retryMessage);
+    // Try to generate OpenAI TTS synchronously with quick fallback
+    const mainAudioElement = this.generateAudioElementSync(message, callId, useAdvancedTTS);
+    const retryAudioElement = this.generateAudioElementSync(retryMessage, callId, useAdvancedTTS);
+    const goodbyeAudioElement = this.generateAudioElementSync("Thanks for calling! Have a great day!", callId, useAdvancedTTS);
 
     if (expectsResponse) {
       return `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
     <Gather input="speech" timeout="${timeout}" speechTimeout="${speechTimeout}" action="${action}">
-        <Say voice="man">${sanitizedMessage}</Say>
+        ${mainAudioElement}
     </Gather>
-    <Say voice="man">${sanitizedRetryMessage}</Say>
-    <Say voice="man">Thanks for calling! Have a great day!</Say>
+    ${retryAudioElement}
+    ${goodbyeAudioElement}
     <Hangup/>
 </Response>`;
     } else {
       return `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Say voice="man">${sanitizedMessage}</Say>
-    <Say voice="man">Thanks for calling! Have a great day!</Say>
+    ${mainAudioElement}
+    ${goodbyeAudioElement}
     <Hangup/>
 </Response>`;
     }
   }
 
   /**
+   * Generate audio element synchronously with smart caching
+   */
+  private static generateAudioElementSync(text: string, callId?: string, useAdvancedTTS: boolean = true): string {
+    if (!useAdvancedTTS) {
+      // Use basic TTS
+      const sanitizedText = this.sanitizeForXML(text);
+      return `<Say voice="man">${sanitizedText}</Say>`;
+    }
+
+    // Use the cache manager for smart TTS selection
+    // This will return <Play> for cached OpenAI audio or <Say> with background caching
+    return ttsCacheManager.getAudioElement(text, callId);
+  }
+
+  /**
+   * Generate audio element - either <Say> or <Play> based on TTS availability
+   */
+  private static async generateAudioElement(text: string, callId?: string, useAdvancedTTS: boolean = true): Promise<string> {
+    if (!useAdvancedTTS) {
+      // Use basic Twilio TTS
+      const sanitizedText = this.sanitizeForXML(text);
+      return `<Say voice="man">${sanitizedText}</Say>`;
+    }
+
+    try {
+      // Try to generate advanced TTS
+      const { url, fallbackText } = await ttsAudioManager.generateAudioWithFallback(text, callId);
+      
+      if (url) {
+        // Use <Play> for high-quality TTS
+        return `<Play>${url}</Play>`;
+      } else {
+        // Fallback to <Say> if TTS fails
+        const sanitizedText = this.sanitizeForXML(fallbackText);
+        return `<Say voice="man">${sanitizedText}</Say>`;
+      }
+    } catch (error) {
+      console.error('Failed to generate advanced TTS, using fallback:', error);
+      // Fallback to basic TTS
+      const sanitizedText = this.sanitizeForXML(text);
+      return `<Say voice="man">${sanitizedText}</Say>`;
+    }
+  }
+
+  /**
    * Generate TwiML for initial greeting
    */
-  static generateGreetingTwiML(action: string): string {
+  static generateGreetingTwiML(action: string, callId?: string): string {
     return this.generateConversationTwiML({
       message: "G'day! Thanks for calling. I'm Johnno, your AI assistant. How can I help you today?",
       expectsResponse: true,
       timeout: this.DEFAULT_TIMEOUT,
       speechTimeout: this.DEFAULT_SPEECH_TIMEOUT,
       retryMessage: "Sorry, I didn't hear you. Please tell me how I can help you today.",
-      action
+      action,
+      callId,
+      useAdvancedTTS: true
     });
   }
 
@@ -99,7 +152,9 @@ export class TwiMLGenerator {
       timeout,
       speechTimeout: this.DEFAULT_SPEECH_TIMEOUT,
       retryMessage,
-      action
+      action,
+      callId: callState.callSid,
+      useAdvancedTTS: true
     });
   }
 

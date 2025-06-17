@@ -140,26 +140,9 @@ export class BookingService {
    * Generate booking confirmation message
    */
   generateBookingConfirmation(booking: Booking): string {
-    const preferredDate = (booking as any).preferred_date || booking.preferredDate;
-    const preferredTime = (booking as any).preferred_time || booking.preferredTime;
-    const dateStr = preferredDate ? 
-      new Date(preferredDate).toLocaleDateString('en-AU') : 'to be confirmed';
-    const timeStr = preferredTime || 'to be confirmed';
-    
-    const customerPhone = (booking as any).customer_phone || booking.customerPhone;
-    
-    // Sanitize phone number for display
-    const displayPhone = this.sanitizePhoneForDisplay(customerPhone);
-    
-    return `Perfect! I've got your booking request:
-    
-Name: ${(booking as any).customer_name || booking.customerName}
-Phone: ${displayPhone}
-Service: ${(booking as any).service_type || booking.serviceType}
-Preferred Date: ${dateStr}
-Preferred Time: ${timeStr}
-
-We'll send you a confirmation email shortly and someone will call you to confirm the details. Is there anything else I can help you with?`;
+    // Use short, cached-friendly message for 100% OpenAI TTS reliability
+    const customerName = (booking as any).customer_name || booking.customerName;
+    return `Perfect! Thanks ${customerName}. I've got your booking request and we'll send you a confirmation email shortly. Someone will call you to confirm the details. Is there anything else I can help you with?`;
   }
   
   /**

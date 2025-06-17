@@ -70,7 +70,7 @@ const twilioRobustRoutes: FastifyPluginAsync = async function (fastify) {
         
         // Return the current state's appropriate response rather than restarting
         const action = `https://${request.headers.host}/twilio/gather`;
-        const twiml = TwiMLGenerator.generateGreetingTwiML(action);
+        const twiml = TwiMLGenerator.generateGreetingTwiML(action, CallSid);
         return reply.type('text/xml').send(twiml);
       }
 
@@ -93,7 +93,7 @@ const twilioRobustRoutes: FastifyPluginAsync = async function (fastify) {
 
       // Generate greeting TwiML with proper action URL
       const action = `https://${request.headers.host}/twilio/gather`;
-      const twiml = TwiMLGenerator.generateGreetingTwiML(action);
+      const twiml = TwiMLGenerator.generateGreetingTwiML(action, CallSid);
 
       // Validate TwiML before sending
       if (!TwiMLGenerator.validateTwiML(twiml)) {
@@ -313,7 +313,9 @@ const twilioRobustRoutes: FastifyPluginAsync = async function (fastify) {
         : TwiMLGenerator.generateConversationTwiML({ 
             message: responseMessage, 
             expectsResponse: false, 
-            action 
+            action,
+            callId: CallSid,
+            useAdvancedTTS: true
           });
 
       // Validate TwiML before sending
