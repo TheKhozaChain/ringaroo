@@ -6,7 +6,7 @@ import { appConfig } from '@/config';
 import { db } from '@/services/database';
 import { redis } from '@/services/redis';
 import { bookingService } from '@/services/booking';
-import twilioRobustRoutes from '@/routes/twilio-robust';
+import twilioRoutes from '@/routes/twilio';
 import actionsRoutes from '@/routes/actions';
 
 const fastify = Fastify({
@@ -205,7 +205,7 @@ async function buildApp() {
   });
 
   // Register route plugins
-  await fastify.register(twilioRobustRoutes);
+  await fastify.register(twilioRoutes);
   await fastify.register(actionsRoutes);
 
   return fastify;

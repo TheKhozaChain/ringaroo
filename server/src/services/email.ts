@@ -1,5 +1,5 @@
-const nodemailer = require('nodemailer');
 import { appConfig } from '@/config';
+import * as nodemailer from 'nodemailer';
 import type { Booking } from '@/types';
 
 export interface EmailConfig {

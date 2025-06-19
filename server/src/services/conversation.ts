@@ -33,7 +33,7 @@ export interface ConversationMessage {
 }
 
 export interface BusinessContext {
-  businessType: 'medical' | 'electrician' | 'beauty' | 'general';
+  businessType: 'medical' | 'electrician' | 'beauty' | 'pestcontrol' | 'general';
   businessName: string;
   services: string[];
   hours: {
@@ -72,22 +72,22 @@ export class ConversationService {
       apiKey: appConfig.openaiApiKey,
     });
 
-    // Default business context for demo - can be customized per tenant
+    // Default business context set to Pest Blitz for demo
     this.defaultBusinessContext = {
-      businessType: 'general',
-      businessName: 'Aussie Business Services',
-      services: ['consultation', 'booking', 'general inquiry', 'support'],
+      businessType: 'pestcontrol',
+      businessName: 'Pest Blitz',
+      services: ['Residential Pest Control', 'Commercial Pest Control', 'Termite Treatment', 'Ant Control', 'Cockroach Treatment', 'Spider Control', 'Rodent Control'],
       hours: {
-        monday: '9:00 AM - 5:00 PM',
-        tuesday: '9:00 AM - 5:00 PM', 
-        wednesday: '9:00 AM - 5:00 PM',
-        thursday: '9:00 AM - 5:00 PM',
-        friday: '9:00 AM - 5:00 PM',
-        saturday: '9:00 AM - 12:00 PM',
+        monday: '7:00 AM - 7:00 PM',
+        tuesday: '7:00 AM - 7:00 PM', 
+        wednesday: '7:00 AM - 7:00 PM',
+        thursday: '7:00 AM - 7:00 PM',
+        friday: '7:00 AM - 7:00 PM',
+        saturday: '8:00 AM - 12:00 PM',
         sunday: 'Closed'
       },
-      location: 'Sydney, Australia',
-      phone: '+61 2 5944 5971'
+      location: 'North Shore Sydney - Mosman, Cremorne, Kirribilli, North Sydney, Chatswood, Neutral Bay',
+      phone: '02 8330 6682'
     };
   }
 
@@ -338,6 +338,22 @@ ${relevantKnowledge}
 
 **Important:** Use the above information to answer the customer's question accurately. This information is specific to our business and should take priority over general knowledge.`;
     }
+
+    // Add business-specific instructions
+    let businessSpecificGuidelines = '';
+    if (business.businessType === 'pestcontrol') {
+      businessSpecificGuidelines = `
+
+**Pest Control Specific Guidelines:**
+- Identify urgency: Emergency pest issues (termites, commercial) get priority booking
+- Ask about pest type: Different pests require different treatments and timing
+- Location matters: Confirm we service their area (North Shore Sydney)
+- Safety focus: Reassure about pet/family-safe treatments
+- Commercial clients: Mention health compliance documentation
+- Service areas: Mosman, Cremorne, Kirribilli, North Sydney, Chatswood, Neutral Bay
+- Emergency phrases: "urgent", "termites", "restaurant", "infestation" = priority
+- Always mention our guarantee and risk assessment process`;
+    }
     
     return `You are Johnno, a friendly Australian AI receptionist for ${business.businessName}.
 
@@ -356,7 +372,7 @@ ${relevantKnowledge}
 **Hours:**
 Monday-Friday: ${business.hours.monday}
 Saturday: ${business.hours.saturday}
-Sunday: ${business.hours.sunday}${knowledgeSection}
+Sunday: ${business.hours.sunday}${knowledgeSection}${businessSpecificGuidelines}
 
 **Guidelines:**
 - For bookings: Ask for name, preferred service, and time

@@ -135,7 +135,7 @@ export class OpenAITTSService implements TTSService {
           'Content-Type': 'application/json',
         },
         responseType: 'arraybuffer',
-        timeout: 30000, // 30 seconds - maximum timeout for 100% OpenAI TTS reliability
+        timeout: 8000, // 8 seconds - reasonable timeout for demo
       });
 
       return Buffer.from(response.data);
@@ -321,7 +321,7 @@ class TTSCacheManager {
     return 4000;                        // 4 seconds for long text
   }
 
-  getAudioElement(text: string, callId?: string): string {
+  async getAudioElement(text: string, callId?: string): Promise<string> {
     // Check cache first for instant OpenAI TTS
     const cachedUrl = this.cache.get(text);
     if (cachedUrl) {
@@ -329,55 +329,35 @@ class TTSCacheManager {
       return `<Play>${cachedUrl}</Play>`;
     }
 
-    // 100% OpenAI TTS - NO FALLBACKS - Wait as long as needed
+    // 100% OpenAI TTS - NO FALLBACKS - Use proper async/await
     console.log(`🎯 FORCING 100% OpenAI TTS for: "${text.substring(0, 30)}..." (${text.length} chars) - NO FALLBACKS`);
     
     const startTime = Date.now();
-    let result = null;
-    let error = null;
-    let finished = false;
+    const maxWaitTime = 8000; // Maximum 8 seconds for demo responsiveness
 
-    // Start OpenAI TTS generation
-    this.ttsAudioManager.generateAudioUrl(text, callId)
-        .then(url => {
-            result = url;
-            finished = true;
-            this.cache.set(text, url);
-            console.log(`🎉 100% OpenAI TTS SUCCESS: "${text.substring(0, 30)}..." -> ${url}`);
-        })
-        .catch(err => {
-            error = err;
-            finished = true;
-            console.error(`💥 OpenAI TTS FAILED: ${err}`);
-        });
+    try {
+        // Use Promise.race for proper timeout handling
+        const url = await Promise.race([
+            this.ttsAudioManager.generateAudioUrl(text, callId),
+            new Promise<never>((_, reject) => 
+                setTimeout(() => reject(new Error('TTS timeout')), maxWaitTime)
+            )
+        ]);
 
-    // Wait up to 30 seconds for OpenAI TTS - 100% OpenAI or nothing
-    const maxWaitTime = 30000; // Maximum 30 seconds to match API timeout
-    const endTime = Date.now() + maxWaitTime;
-    
-    while (!finished && Date.now() < endTime) {
-        // Use minimal blocking to allow other operations
-        require('child_process').spawnSync('node', ['-e', ''], {stdio: 'ignore', timeout: 50});
-    }
-
-    if (result) {
         const duration = Date.now() - startTime;
-        console.log(`✅ 100% OpenAI TTS completed in ${duration}ms`);
-        return `<Play>${result}</Play>`;
-    }
+        this.cache.set(text, url);
+        console.log(`🎉 100% OpenAI TTS SUCCESS: "${text.substring(0, 30)}..." -> ${url} (${duration}ms)`);
+        return `<Play>${url}</Play>`;
 
-    // If we get here, OpenAI TTS truly failed after 15 seconds
-    const duration = Date.now() - startTime;
-    if (!finished) {
-        console.error(`🚨 SYSTEM FAILURE: OpenAI TTS could not complete after ${duration}ms for: "${text.substring(0, 30)}..." - API timeout exceeded!`);
-    } else {
-        console.error(`🚨 SYSTEM FAILURE: OpenAI TTS API error after ${duration}ms - Error: ${error}`);
+    } catch (error: any) {
+        const duration = Date.now() - startTime;
+        console.error(`🚨 SYSTEM FAILURE: OpenAI TTS failed after ${duration}ms for: "${text.substring(0, 30)}..." - Error: ${error.message}`);
+        
+        // Last resort: Return a basic message but log as critical failure
+        console.error(`🚨 CRITICAL: Returning emergency fallback - This indicates a serious system problem!`);
+        const sanitizedText = this.sanitizeForXML("I'm having technical difficulties. Please try calling back in a moment.");
+        return `<Say voice="man">${sanitizedText}</Say>`;
     }
-    
-    // Last resort: Return a basic message but log as critical failure
-    console.error(`🚨 CRITICAL: Returning emergency fallback - This indicates a serious system problem!`);
-    const sanitizedText = this.sanitizeForXML("I'm having technical difficulties. Please try calling back in a moment.");
-    return `<Say voice="man">${sanitizedText}</Say>`;
   }
 
   async getAudioElementWithTimeout(text: string, callId?: string, timeout: number = 2000): Promise<string> {

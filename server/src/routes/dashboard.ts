@@ -10,7 +10,7 @@ export async function dashboardRoutes(fastify: FastifyInstance) {
       return stats;
     } catch (error) {
       console.error('Failed to get dashboard stats:', error);
-      reply.status(500).send({ error: 'Failed to get dashboard stats' });
+      return reply.status(500).send({ error: 'Failed to get dashboard stats' });
     }
   });
 
@@ -23,7 +23,7 @@ export async function dashboardRoutes(fastify: FastifyInstance) {
       return bookings;
     } catch (error) {
       console.error('Failed to get bookings:', error);
-      reply.status(500).send({ error: 'Failed to get bookings' });
+      return reply.status(500).send({ error: 'Failed to get bookings' });
     }
   });
 
@@ -43,7 +43,7 @@ export async function dashboardRoutes(fastify: FastifyInstance) {
       return updatedBooking;
     } catch (error) {
       console.error('Failed to update booking:', error);
-      reply.status(500).send({ error: 'Failed to update booking' });
+      return reply.status(500).send({ error: 'Failed to update booking' });
     }
   });
 
@@ -57,7 +57,7 @@ export async function dashboardRoutes(fastify: FastifyInstance) {
         timestamp: new Date().toISOString()
       };
     } catch (error) {
-      reply.status(500).send({
+      return reply.status(500).send({
         status: 'error',
         database: 'disconnected',
         timestamp: new Date().toISOString()

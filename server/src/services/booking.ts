@@ -34,20 +34,20 @@ export class BookingService {
       preferredDate = this.parseDate(request.preferredDate);
     }
     
-    // For now, we'll set callId to null since we'd need to look up the Call UUID
+    // For now, we'll set callId to undefined since we'd need to look up the Call UUID
     // In the future, we could look up the call by twilioCallSid if needed
     const booking: Omit<Booking, 'id' | 'createdAt' | 'updatedAt'> = {
       tenantId: request.tenantId,
-      callId: null, // Set to null for now, can be linked later if needed
-      customerName: request.customerName || null,
-      customerPhone: request.customerPhone || null,
-      customerEmail: request.customerEmail || null,
-      serviceType: request.serviceType || null,
-      preferredDate: preferredDate || null,
-      preferredTime: request.preferredTime || null,
-      notes: request.twilioCallSid ? `Call SID: ${request.twilioCallSid}` : null,
+      callId: undefined, // Set to undefined for now, can be linked later if needed
+      customerName: request.customerName || undefined,
+      customerPhone: request.customerPhone || undefined,
+      customerEmail: request.customerEmail || undefined,
+      serviceType: request.serviceType || undefined,
+      preferredDate: preferredDate || undefined,
+      preferredTime: request.preferredTime || undefined,
+      notes: request.twilioCallSid ? `Call SID: ${request.twilioCallSid}` : undefined,
       status: 'pending',
-      externalBookingId: null
+      externalBookingId: undefined
     };
     
     const createdBooking = await db.createBooking(booking);
@@ -157,7 +157,7 @@ export class BookingService {
   /**
    * Parse date from natural language input
    */
-  private parseDate(dateStr: string): Date | null {
+  private parseDate(dateStr: string): Date | undefined {
     try {
       // Handle common formats
       const cleanDateStr = dateStr.toLowerCase().trim();
@@ -180,20 +180,20 @@ export class BookingService {
       // Try parsing as standard date
       const parsed = new Date(dateStr);
       if (isNaN(parsed.getTime())) {
-        return null;
+        return undefined;
       }
       
       // Don't allow dates in the past (more than 1 day ago)
       const yesterday = new Date();
       yesterday.setDate(yesterday.getDate() - 1);
       if (parsed < yesterday) {
-        return null;
+        return undefined;
       }
       
       return parsed;
     } catch (error) {
       console.error('Date parsing error:', error);
-      return null;
+      return undefined;
     }
   }
   

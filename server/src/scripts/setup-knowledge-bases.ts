@@ -154,6 +154,54 @@ const beautySalonKB: BusinessKnowledgeBase = {
   ]
 };
 
+// Pest Control Knowledge Base - Pest Blitz Demo
+const pestControlKB: BusinessKnowledgeBase = {
+  businessType: 'pestcontrol',
+  businessName: 'Pest Blitz',
+  hours: 'Monday-Friday: 7:00 AM - 7:00 PM, Saturday: 8:00 AM - 12:00 PM, Sunday: Closed',
+  services: [
+    'Residential Pest Control',
+    'Commercial Pest Control', 
+    'Termite Treatment',
+    'Ant Control',
+    'Cockroach Treatment',
+    'Spider Control',
+    'Rodent Control'
+  ],
+  location: 'North Shore Sydney - Mosman, Cremorne, Kirribilli, North Sydney, Chatswood, Neutral Bay',
+  phone: '02 8330 6682',
+  faqs: [
+    {
+      question: 'What areas do you service?',
+      answer: 'We service North Shore Sydney including Mosman, Cremorne, Kirribilli, North Sydney, Chatswood, and Neutral Bay.'
+    },
+    {
+      question: 'Are your treatments safe for families and pets?',
+      answer: 'Yes, we use low-toxicity, quick-drying, odorless chemicals that are safe for families and pets.'
+    },
+    {
+      question: 'How long does a treatment take?',
+      answer: 'Most residential treatments take 20-30 minutes. You can be home during the service.'
+    },
+    {
+      question: 'Do you provide guarantees on your work?',
+      answer: 'Yes, we provide guarantees on our pest control services and conduct risk assessments before treatments.'
+    },
+    {
+      question: 'How quickly can you come out for service?',
+      answer: 'We offer same-day and next-day service. For urgent termite or commercial issues, we prioritize emergency bookings.'
+    }
+  ],
+  policies: [
+    'We use green, family-friendly products with lowest mammalian toxicity',
+    'Non-repellent treatments for indoor applications',
+    'Risk assessments conducted before all treatments',
+    'Tailored treatment plans based on pest type and infestation level',
+    'Documentation provided for commercial clients to meet health regulations',
+    'Flexible scheduling to minimize disruption to business operations'
+  ]
+};
+
 async function setupKnowledgeBases() {
   try {
     console.log('🔧 Setting up sample knowledge bases...');
@@ -177,6 +225,9 @@ async function setupKnowledgeBases() {
     
     console.log('\n💄 Setting up Beauty Salon knowledge base...');
     await knowledgeService.setupBusinessKnowledgeBase(demoTenantId, beautySalonKB);
+    
+    console.log('\n🐛 Setting up Pest Control knowledge base (Pest Blitz Demo)...');
+    await knowledgeService.setupBusinessKnowledgeBase(demoTenantId, pestControlKB);
 
     // Get knowledge statistics
     const stats = await knowledgeService.getKnowledgeStats(demoTenantId);
@@ -217,4 +268,4 @@ if (require.main === module) {
   setupKnowledgeBases();
 }
 
-export { setupKnowledgeBases, medicalClinicKB, electricianKB, beautySalonKB };
+export { setupKnowledgeBases, medicalClinicKB, electricianKB, beautySalonKB, pestControlKB };

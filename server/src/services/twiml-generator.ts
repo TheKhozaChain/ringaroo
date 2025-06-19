@@ -21,7 +21,7 @@ export class TwiMLGenerator {
   /**
    * Generate TwiML for conversation continuation
    */
-  static generateConversationTwiML(options: TwiMLOptions): string {
+  static async generateConversationTwiML(options: TwiMLOptions): Promise<string> {
     const {
       message,
       expectsResponse,
@@ -33,10 +33,10 @@ export class TwiMLGenerator {
       useAdvancedTTS = true
     } = options;
 
-    // Try to generate OpenAI TTS synchronously with quick fallback
-    const mainAudioElement = this.generateAudioElementSync(message, callId, useAdvancedTTS);
-    const retryAudioElement = this.generateAudioElementSync(retryMessage, callId, useAdvancedTTS);
-    const goodbyeAudioElement = this.generateAudioElementSync("Thanks for calling! Have a great day!", callId, useAdvancedTTS);
+    // Generate OpenAI TTS properly with async/await
+    const mainAudioElement = await this.generateAudioElementSync(message, callId, useAdvancedTTS);
+    const retryAudioElement = await this.generateAudioElementSync(retryMessage, callId, useAdvancedTTS);
+    const goodbyeAudioElement = await this.generateAudioElementSync("Thanks for calling! Have a great day!", callId, useAdvancedTTS);
 
     if (expectsResponse) {
       return `<?xml version="1.0" encoding="UTF-8"?>
@@ -61,7 +61,7 @@ export class TwiMLGenerator {
   /**
    * Generate audio element synchronously with smart caching
    */
-  private static generateAudioElementSync(text: string, callId?: string, useAdvancedTTS: boolean = true): string {
+  private static async generateAudioElementSync(text: string, callId?: string, useAdvancedTTS: boolean = true): Promise<string> {
     if (!useAdvancedTTS) {
       // Use basic TTS
       const sanitizedText = this.sanitizeForXML(text);
@@ -69,8 +69,8 @@ export class TwiMLGenerator {
     }
 
     // Use the cache manager for smart TTS selection
-    // This will return <Play> for cached OpenAI audio or <Say> with background caching
-    return ttsCacheManager.getAudioElement(text, callId);
+    // This will return <Play> for cached OpenAI audio or properly wait for TTS
+    return await ttsCacheManager.getAudioElement(text, callId);
   }
 
   /**
@@ -106,8 +106,8 @@ export class TwiMLGenerator {
   /**
    * Generate TwiML for initial greeting
    */
-  static generateGreetingTwiML(action: string, callId?: string): string {
-    return this.generateConversationTwiML({
+  static async generateGreetingTwiML(action: string, callId?: string): Promise<string> {
+    return await this.generateConversationTwiML({
       message: "G'day! Thanks for calling. I'm Johnno, your AI assistant. How can I help you today?",
       expectsResponse: true,
       timeout: this.DEFAULT_TIMEOUT,
@@ -136,7 +136,7 @@ export class TwiMLGenerator {
   /**
    * Generate TwiML based on conversation state
    */
-  static generateStatefulTwiML(callState: CallState, message: string, action: string): string {
+  static async generateStatefulTwiML(callState: CallState, message: string, action: string): Promise<string> {
     // Determine if we expect a response based on conversation step and message content
     const expectsResponse = this.shouldExpectResponse(callState, message);
     
@@ -146,7 +146,7 @@ export class TwiMLGenerator {
     // Generate appropriate retry message based on context
     const retryMessage = this.getRetryMessageForStep(callState.conversationStep);
 
-    return this.generateConversationTwiML({
+    return await this.generateConversationTwiML({
       message,
       expectsResponse,
       timeout,

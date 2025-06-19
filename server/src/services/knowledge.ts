@@ -10,7 +10,7 @@ export interface KnowledgeSearchResult {
 }
 
 export interface BusinessKnowledgeBase {
-  businessType: 'medical' | 'electrician' | 'beauty' | 'general';
+  businessType: 'medical' | 'electrician' | 'beauty' | 'pestcontrol' | 'general';
   businessName: string;
   hours: string;
   services: string[];
@@ -242,7 +242,7 @@ Our main services include ${services.join(', ')}. We are experienced in providin
     const stats = {
       totalChunks: chunks.length,
       totalTokens: chunks.reduce((sum, chunk) => sum + (chunk.tokenCount || 0), 0),
-      categories: {}
+      categories: {} as Record<string, number>
     };
 
     // Count by category

@@ -1,6 +1,6 @@
 import { FastifyPluginAsync } from 'fastify';
 import { orchestrator } from '@/services/orchestrator';
-import { ttsService } from '@/services/tts';
+import { ttsCacheManager } from '@/services/tts';
 import { speechService, AudioFormat } from '@/services/speech';
 import { conversationService } from '@/services/conversation';
 import OpenAI from 'openai';
@@ -31,16 +31,22 @@ const twilioRoutes: FastifyPluginAsync = async function (fastify) {
       await conversationService.initializeConversation(CallSid, From);
       fastify.log.info('Conversation initialized', { CallSid, From });
 
-      // Return TwiML with speech recognition
+      // Return TwiML with speech recognition using OpenAI TTS
       const webhookUrl = `https://${request.headers.host}`;
       const gatherUrl = webhookUrl + '/twilio/gather';
       
+      // Generate proper OpenAI TTS for greeting
+      const greetingAudio = await ttsCacheManager.getAudioElement("G'day! Thanks for calling. I'm Johnno, your AI assistant. How can I help you today?", CallSid);
+      const fallbackAudio = await ttsCacheManager.getAudioElement("Sorry, I didn't hear you. Please tell me how I can help you today.", CallSid);
+      const goodbyeAudio = await ttsCacheManager.getAudioElement("Thanks for calling! Have a great day!", CallSid);
+      
       const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Gather input="speech" timeout="10" speechTimeout="3" action="${gatherUrl}">
-        <Say voice="man">G'day! Thanks for calling. I'm Johnno, your AI assistant. How can I help you today?</Say>
+    <Gather input="speech" timeout="6" speechTimeout="2" action="${gatherUrl}">
+        ${greetingAudio}
     </Gather>
-    <Say voice="man">Sorry, I didn't hear you. Goodbye!</Say>
+    ${fallbackAudio}
+    ${goodbyeAudio}
     <Hangup/>
 </Response>`;
 
@@ -55,12 +61,10 @@ const twilioRoutes: FastifyPluginAsync = async function (fastify) {
         To: (request.body as any)?.To
       });
       
-      // Return error TwiML
+      // Return error TwiML with fallback to basic Say (in case TTS service is down)
       const errorTwiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Say voice="man">
-        Sorry, we're experiencing technical difficulties. Please try calling back later.
-    </Say>
+    <Say voice="man">Sorry, we're experiencing technical difficulties. Please try calling back later.</Say>
     <Hangup />
 </Response>`;
       
@@ -164,6 +168,11 @@ const twilioRoutes: FastifyPluginAsync = async function (fastify) {
       let responseTwiml;
       
       if (continueConversation) {
+        // Generate OpenAI TTS for the response
+        const responseAudio = await ttsCacheManager.getAudioElement(responseText, CallSid);
+        const retryAudio = await ttsCacheManager.getAudioElement("I didn't catch that. Could you please repeat your response?", CallSid);
+        const goodbyeAudio = await ttsCacheManager.getAudioElement("Thanks for calling! Have a great day!", CallSid);
+        
         // Only add follow-up prompt if the response doesn't already include a question
         const hasQuestion = responseText.includes('?') || responseText.toLowerCase().includes('can i') || responseText.toLowerCase().includes('would you like');
         
@@ -171,29 +180,35 @@ const twilioRoutes: FastifyPluginAsync = async function (fastify) {
           // Response already has a question, just listen for answer
           responseTwiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Gather input="speech" timeout="10" speechTimeout="3" action="${gatherUrl}">
-        <Say voice="man">${responseText.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</Say>
+    <Gather input="speech" timeout="6" speechTimeout="2" action="${gatherUrl}">
+        ${responseAudio}
     </Gather>
-    <Say voice="man">Thanks for calling! Have a great day!</Say>
+    ${retryAudio}
+    ${goodbyeAudio}
     <Hangup/>
 </Response>`;
         } else {
           // Response is a statement, add a subtle follow-up
           responseTwiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Say voice="man">${responseText.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</Say>
-    <Gather input="speech" timeout="10" speechTimeout="3" action="${gatherUrl}">
+    ${responseAudio}
+    <Gather input="speech" timeout="6" speechTimeout="2" action="${gatherUrl}">
     </Gather>
-    <Say voice="man">Thanks for calling! Have a great day!</Say>
+    ${retryAudio}
+    ${goodbyeAudio}
     <Hangup/>
 </Response>`;
         }
       } else {
+        // Final response without expecting more input
+        const responseAudio = await ttsCacheManager.getAudioElement(responseText, CallSid);
+        const goodbyeAudio = await ttsCacheManager.getAudioElement("Thanks for calling! Have a great day!", CallSid);
+        
         responseTwiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Say voice="man">${responseText.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</Say>
+    ${responseAudio}
     <Pause length="1"/>
-    <Say voice="man">Thanks for calling! Have a great day!</Say>
+    ${goodbyeAudio}
     <Hangup/>
 </Response>`;
       }
@@ -201,6 +216,7 @@ const twilioRoutes: FastifyPluginAsync = async function (fastify) {
       reply.type('text/xml').send(responseTwiml);
       
     } catch (error: any) {
+      const { CallSid, SpeechResult, Confidence } = request.body as any;
       fastify.log.error('Error in gather endpoint:', {
         error: error.message,
         stack: error.stack,
