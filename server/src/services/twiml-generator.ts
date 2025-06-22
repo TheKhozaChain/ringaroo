@@ -14,8 +14,8 @@ export interface TwiMLOptions {
 }
 
 export class TwiMLGenerator {
-  private static readonly DEFAULT_TIMEOUT = 6;
-  private static readonly DEFAULT_SPEECH_TIMEOUT = 2;
+  private static readonly DEFAULT_TIMEOUT = 2;
+  private static readonly DEFAULT_SPEECH_TIMEOUT = 1;
   private static readonly DEFAULT_MAX_RETRIES = 2;
 
   /**
@@ -68,9 +68,9 @@ export class TwiMLGenerator {
       return `<Say voice="man">${sanitizedText}</Say>`;
     }
 
-    // Use the cache manager for smart TTS selection
-    // This will return <Play> for cached OpenAI audio or properly wait for TTS
-    return await ttsCacheManager.getAudioElement(text, callId);
+    // Use the cache manager for smart TTS selection with a sensible timeout
+    // This returns <Play> for cached audio or quickly falls back to <Say>
+    return await ttsCacheManager.getAudioElementWithTimeout(text, callId);
   }
 
   /**
@@ -192,11 +192,11 @@ export class TwiMLGenerator {
   private static getTimeoutForStep(step: string): number {
     switch (step) {
       case 'greeting':
-        return 8; // Reduced time for initial response
+        return 3; // Faster response for greeting
       case 'collecting_info':
-        return 6; // Reduced time for info collection
+        return 3; // Snappier info collection
       case 'booking':
-        return 8; // Reduced time for booking details
+        return 5; // Allow a bit more time for booking details
       default:
         return this.DEFAULT_TIMEOUT;
     }

@@ -119,6 +119,13 @@ export class OpenAITTSService implements TTSService {
     this.apiKey = appConfig.openaiApiKey || '';
   }
 
+  private getTimeoutForText(text: string): number {
+    const length = text.length;
+    if (length <= 50) return 3000;
+    if (length <= 100) return 5000;
+    return 7000;
+  }
+
   async synthesize(text: string): Promise<Buffer> {
     const url = 'https://api.openai.com/v1/audio/speech';
 
@@ -128,14 +135,14 @@ export class OpenAITTSService implements TTSService {
         input: text,
         voice: this.voice,
         response_format: 'mp3', // Twilio supports MP3
-        speed: 1.0, // Normal speed for natural conversation
+        speed: 1.1, // Slightly faster speech for snappier responses
       }, {
         headers: {
           'Authorization': `Bearer ${this.apiKey}`,
           'Content-Type': 'application/json',
         },
         responseType: 'arraybuffer',
-        timeout: 8000, // 8 seconds - reasonable timeout for demo
+        timeout: this.getTimeoutForText(text),
       });
 
       return Buffer.from(response.data);
@@ -316,9 +323,9 @@ class TTSCacheManager {
 
   private getTimeoutForText(text: string): number {
     const length = text.length;
-    if (length <= 50) return 2000;      // 2 seconds for short text
-    if (length <= 100) return 3000;     // 3 seconds for medium text
-    return 4000;                        // 4 seconds for long text
+    if (length <= 50) return 1000;      // 1 second for short text
+    if (length <= 100) return 2000;     // 2 seconds for medium text
+    return 3000;                        // 3 seconds for long text
   }
 
   async getAudioElement(text: string, callId?: string): Promise<string> {
@@ -333,7 +340,7 @@ class TTSCacheManager {
     console.log(`🎯 FORCING 100% OpenAI TTS for: "${text.substring(0, 30)}..." (${text.length} chars) - NO FALLBACKS`);
     
     const startTime = Date.now();
-    const maxWaitTime = 8000; // Maximum 8 seconds for demo responsiveness
+    const maxWaitTime = 4000; // Reduce wait time for snappier responses
 
     try {
         // Use Promise.race for proper timeout handling
@@ -360,7 +367,8 @@ class TTSCacheManager {
     }
   }
 
-  async getAudioElementWithTimeout(text: string, callId?: string, timeout: number = 2000): Promise<string> {
+  async getAudioElementWithTimeout(text: string, callId?: string, timeout?: number): Promise<string> {
+    const effectiveTimeout = timeout ?? this.getTimeoutForText(text);
     // Check cache first for instant OpenAI TTS
     const cachedUrl = this.cache.get(text);
     if (cachedUrl) {
@@ -370,11 +378,11 @@ class TTSCacheManager {
 
     // Try to generate OpenAI TTS with timeout
     try {
-      console.log(`Attempting real-time OpenAI TTS for: "${text.substring(0, 30)}..." (${timeout}ms timeout)`);
-      
+      console.log(`Attempting real-time OpenAI TTS for: "${text.substring(0, 30)}..." (${effectiveTimeout}ms timeout)`);
+
       const urlPromise = this.ttsAudioManager.generateAudioUrl(text, callId);
-      const timeoutPromise = new Promise<never>((_, reject) => 
-        setTimeout(() => reject(new Error('TTS timeout')), timeout)
+      const timeoutPromise = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('TTS timeout')), effectiveTimeout)
       );
 
       const url = await Promise.race([urlPromise, timeoutPromise]);
