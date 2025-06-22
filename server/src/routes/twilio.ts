@@ -36,13 +36,25 @@ const twilioRoutes: FastifyPluginAsync = async function (fastify) {
       const gatherUrl = webhookUrl + '/twilio/gather';
       
       // Generate proper OpenAI TTS for greeting
-      const greetingAudio = await ttsCacheManager.getAudioElement("G'day! Thanks for calling. I'm Johnno, your AI assistant. How can I help you today?", CallSid);
-      const fallbackAudio = await ttsCacheManager.getAudioElement("Sorry, I didn't hear you. Please tell me how I can help you today.", CallSid);
-      const goodbyeAudio = await ttsCacheManager.getAudioElement("Thanks for calling! Have a great day!", CallSid);
+      const greetingAudio = await ttsCacheManager.getAudioElementWithTimeout(
+        "G'day! Thanks for calling. I'm Johnno, your AI assistant. How can I help you today?",
+        CallSid,
+        2000
+      );
+      const fallbackAudio = await ttsCacheManager.getAudioElementWithTimeout(
+        "Sorry, I didn't hear you. Please tell me how I can help you today.",
+        CallSid,
+        1500
+      );
+      const goodbyeAudio = await ttsCacheManager.getAudioElementWithTimeout(
+        "Thanks for calling! Have a great day!",
+        CallSid,
+        1500
+      );
       
       const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Gather input="speech" timeout="6" speechTimeout="2" action="${gatherUrl}">
+    <Gather input="speech" timeout="2" speechTimeout="1" action="${gatherUrl}">
         ${greetingAudio}
     </Gather>
     ${fallbackAudio}
@@ -169,9 +181,13 @@ const twilioRoutes: FastifyPluginAsync = async function (fastify) {
       
       if (continueConversation) {
         // Generate OpenAI TTS for the response
-        const responseAudio = await ttsCacheManager.getAudioElement(responseText, CallSid);
-        const retryAudio = await ttsCacheManager.getAudioElement("I didn't catch that. Could you please repeat your response?", CallSid);
-        const goodbyeAudio = await ttsCacheManager.getAudioElement("Thanks for calling! Have a great day!", CallSid);
+        const responseAudio = await ttsCacheManager.getAudioElementWithTimeout(responseText, CallSid, 2000);
+        const retryAudio = await ttsCacheManager.getAudioElementWithTimeout(
+          "I didn't catch that. Could you please repeat your response?",
+          CallSid,
+          1500
+        );
+        const goodbyeAudio = await ttsCacheManager.getAudioElementWithTimeout("Thanks for calling! Have a great day!", CallSid, 1500);
         
         // Only add follow-up prompt if the response doesn't already include a question
         const hasQuestion = responseText.includes('?') || responseText.toLowerCase().includes('can i') || responseText.toLowerCase().includes('would you like');
@@ -180,7 +196,7 @@ const twilioRoutes: FastifyPluginAsync = async function (fastify) {
           // Response already has a question, just listen for answer
           responseTwiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Gather input="speech" timeout="6" speechTimeout="2" action="${gatherUrl}">
+    <Gather input="speech" timeout="2" speechTimeout="1" action="${gatherUrl}">
         ${responseAudio}
     </Gather>
     ${retryAudio}
@@ -192,7 +208,7 @@ const twilioRoutes: FastifyPluginAsync = async function (fastify) {
           responseTwiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
     ${responseAudio}
-    <Gather input="speech" timeout="6" speechTimeout="2" action="${gatherUrl}">
+    <Gather input="speech" timeout="2" speechTimeout="1" action="${gatherUrl}">
     </Gather>
     ${retryAudio}
     ${goodbyeAudio}
@@ -201,13 +217,12 @@ const twilioRoutes: FastifyPluginAsync = async function (fastify) {
         }
       } else {
         // Final response without expecting more input
-        const responseAudio = await ttsCacheManager.getAudioElement(responseText, CallSid);
-        const goodbyeAudio = await ttsCacheManager.getAudioElement("Thanks for calling! Have a great day!", CallSid);
+        const responseAudio = await ttsCacheManager.getAudioElementWithTimeout(responseText, CallSid, 2000);
+        const goodbyeAudio = await ttsCacheManager.getAudioElementWithTimeout("Thanks for calling! Have a great day!", CallSid, 1500);
         
         responseTwiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
     ${responseAudio}
-    <Pause length="1"/>
     ${goodbyeAudio}
     <Hangup/>
 </Response>`;
