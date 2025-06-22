@@ -277,12 +277,37 @@ class TTSCacheManager {
   }
 
   private async preGenerateCommonPhrases(): Promise<void> {
-    // Pre-generate only the most critical phrases
+    // Pre-generate expanded set of common phrases for better cache coverage
     const criticalPhrases = [
+      // Greeting phrases
       "G'day! Thanks for calling. I'm Johnno, your AI assistant. How can I help you today?",
+      "G'day mate! Great to hear from you. What can I help you with today?",
+      
+      // Error/retry phrases  
       "I didn't catch that. Could you please repeat your response?",
       "Sorry, I didn't hear you. Please tell me how I can help you today?",
-      "Thanks for calling! Have a great day!"
+      "Sorry mate, I'm having a bit of trouble right now. Please try again.",
+      
+      // Closing phrases
+      "Thanks for calling! Have a great day!",
+      "No worries mate! Thanks for calling. Have a great day!",
+      
+      // Common booking confirmations
+      "No worries! I'd be happy to help you book an appointment. What service are you interested in?",
+      "Perfect! Let me help you with that booking. Can I get your name please?",
+      "Great! I'll get that booked for you. What day works best?",
+      
+      // Service explanations
+      "We offer residential pest control, commercial treatments, and emergency services.",
+      "We're open Monday to Friday 7am to 7pm, and Saturday mornings 8am to 12pm.",
+      "We service the North Shore Sydney area including Mosman, Cremorne, and surrounding suburbs.",
+      
+      // Business hours responses
+      "We're open Monday to Friday 7am to 7pm, Saturday 8am to 12pm. When would you like to come in?",
+      "Our business hours are Monday to Friday 7am to 7pm. We also offer emergency services.",
+      
+      // Error messages
+      "Sorry, we're experiencing technical difficulties. Please try calling back later."
     ];
 
     // Generate in background without blocking
@@ -301,9 +326,11 @@ class TTSCacheManager {
 
   private getTimeoutForText(text: string): number {
     const length = text.length;
-    if (length <= 50) return 1000;      // 1 second for short text (aggressive)
-    if (length <= 100) return 1500;     // 1.5 seconds for medium text (aggressive)
-    return 2000;                        // 2 seconds for long text (aggressive)
+    // Optimized timeouts based on text length to prevent longer phrase timeouts
+    if (length <= 50) return 2000;      // 2 seconds for short text
+    if (length <= 100) return 3000;     // 3 seconds for medium text  
+    if (length <= 150) return 4000;     // 4 seconds for longer text
+    return 5000;                        // 5 seconds for very long text
   }
 
   async getAudioElement(text: string, callId?: string): Promise<string> {
@@ -327,10 +354,10 @@ class TTSCacheManager {
     }
 
     // 100% OpenAI TTS - ABSOLUTELY NO FALLBACKS
-    console.log(`🎯 Generating OpenAI TTS for: "${text.substring(0, 30)}..." (${text.length} chars)`);
+    const maxWaitTime = this.getTimeoutForText(text); // Dynamic timeout based on text length
+    console.log(`🎯 Generating OpenAI TTS for: "${text.substring(0, 30)}..." (${text.length} chars, ${maxWaitTime}ms timeout)`);
     
     const startTime = Date.now();
-    const maxWaitTime = 5000; // 5 seconds - wait longer to ensure OpenAI TTS
 
     try {
         // Use Promise.race for proper timeout handling
@@ -413,14 +440,36 @@ class TTSCacheManager {
 
   private isCommonPhrase(text: string): boolean {
     const commonPhrases = [
+      // Greeting patterns
       "G'day! Thanks for calling",
+      "G'day mate! Great to hear",
+      "How can I help you today",
+      
+      // Error/retry patterns  
       "Sorry, I didn't hear you",
+      "I didn't catch that",
+      "Sorry mate, I'm having a bit of trouble",
+      
+      // Closing patterns
       "Thanks for calling! Have a great day",
+      "No worries mate! Thanks for calling",
+      
+      // Booking patterns
       "I can help you with bookings",
       "Let me help you with that",
       "What service would you like",
       "What day works best",
-      "Sorry mate, I'm having a bit of trouble"
+      "Can I get your name please",
+      "Perfect! Let me help you",
+      
+      // Business info patterns
+      "We're open Monday to Friday",
+      "We offer residential pest control",
+      "We service the North Shore",
+      "Our business hours are",
+      
+      // Emergency patterns
+      "Sorry, we're experiencing technical difficulties"
     ];
     
     return commonPhrases.some(phrase => text.includes(phrase));

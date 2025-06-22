@@ -71,7 +71,7 @@
       "!src/scripts/**",
       "!src/index.ts"
     ],
-    "moduleNameMapping": {
+    "moduleNameMapper": {
       "^@/(.*)$": "<rootDir>/src/$1"
     },
     "setupFilesAfterEnv": [

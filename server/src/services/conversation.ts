@@ -566,35 +566,64 @@ ${context.customerInfo?.preferredService ? `- Service interest: ${context.custom
   private extractCustomerInfo(userInput: string, intent: string): Record<string, any> {
     const extractedInfo: Record<string, any> = {};
     
-    // Extract name patterns (multiple approaches)
-    let nameMatch = userInput.match(/(?:my name is|i'm|i am|this is|call me)\s+([a-zA-Z\s]+?)(?:[.!?]|$)/i);
+    // Extract name patterns (multiple approaches with improved logic)
+    let nameMatch = null;
     
-    // If no formal introduction, try to detect if it's just a name
+    // Pattern 1: Formal introductions ("my name is Mark", "I'm John", etc.)
+    nameMatch = userInput.match(/(?:my name is|i'm|i am|this is|call me)\s+([a-zA-Z]+(?:\s+[a-zA-Z]+)?)/i);
+    
+    // Pattern 2: Direct name mentions in context ("I have told Mike", "John 3 p.m.")
+    if (!nameMatch) {
+      // Look for names mentioned in various contexts
+      const contextPatterns = [
+        /(?:told|tell|ask|with|for)\s+([A-Z][a-z]+)/,  // "I have told Mike"
+        /([A-Z][a-z]+)\s+(?:at\s+)?[0-9]+(?:\s*(?:am|pm|o'clock)|\s*[:.]\s*[0-9]+)/i,  // "John 3 p.m."
+        /([A-Z][a-z]+)\s+(?:on\s+)?(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)/i,  // "Mark on Monday"
+        /booking\s+(?:for|under)\s+([A-Z][a-z]+)/i,  // "booking for Sarah"
+        /appointment\s+(?:for|under)\s+([A-Z][a-z]+)/i  // "appointment for David"
+      ];
+      
+      for (const pattern of contextPatterns) {
+        const match = userInput.match(pattern);
+        if (match?.[1]) {
+          // Validate it's likely a name (not a common word)
+          const possibleName = match[1];
+          const commonWords = ['help', 'want', 'need', 'like', 'book', 'call', 'time', 'day', 'week', 'hour'];
+          if (!commonWords.includes(possibleName.toLowerCase())) {
+            nameMatch = [match[0], possibleName];
+            break;
+          }
+        }
+      }
+    }
+    
+    // Pattern 3: Capitalized names in general text (fallback)
     if (!nameMatch) {
       // Clean input by removing punctuation for better matching
       const cleanInput = userInput.replace(/[.!?]/g, '').trim();
       
-      // Look for simple name patterns (first and last name)
-      const namePattern = /\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\b/;
+      // Look for simple name patterns (first and optionally last name)
+      const namePattern = /\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\b/;
       const possibleNameMatch = cleanInput.match(namePattern);
       
       if (possibleNameMatch?.[1]) {
         const possibleName = possibleNameMatch[1];
         // Avoid false positives - skip if it contains common non-name words
-        const excludeWords = ['appointment', 'booking', 'want', 'need', 'like', 'please', 'thank', 'help', 'service'];
-        const containsExcluded = excludeWords.some(word => possibleName.toLowerCase().includes(word));
+        const excludeWords = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday', 'Today', 'Tomorrow', 'Next', 'Last', 'This'];
+        const containsExcluded = excludeWords.some(word => possibleName.includes(word));
         
-        if (!containsExcluded) {
+        if (!containsExcluded && possibleName.length >= 2) {
           nameMatch = [possibleNameMatch[0], possibleName];
         }
       }
-      
-      // If still no match, try very simple pattern for just the input being a name
-      if (!nameMatch && /^[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*[.!?]?$/.test(userInput.trim())) {
-        const simpleName = userInput.replace(/[.!?]/g, '').trim();
-        if (simpleName.split(' ').length >= 2) {
-          nameMatch = [simpleName, simpleName];
-        }
+    }
+    
+    // Pattern 4: Simple single names in short inputs ("Mark", "Sarah", etc.)
+    if (!nameMatch && userInput.trim().length <= 20) {
+      // If the entire input is just a name (possibly with punctuation)
+      const simpleName = userInput.replace(/[.!?]/g, '').trim();
+      if (/^[A-Z][a-z]+$/.test(simpleName) && simpleName.length >= 2) {
+        nameMatch = [simpleName, simpleName];
       }
     }
     
@@ -660,9 +689,25 @@ ${context.customerInfo?.preferredService ? `- Service interest: ${context.custom
     // Also extract these for any intent (they might mention their name/phone anytime)
     
     // Extract just the first name if they say something like "Hi, this is John" 
-    const simpleNameMatch = userInput.match(/(?:hi|hello|g'day),?\s+(?:this is |i'm |it's )?([a-zA-Z]+)/i);
-    if (simpleNameMatch?.[1] && !extractedInfo.name) {
-      extractedInfo.name = simpleNameMatch[1].trim();
+    if (!extractedInfo.name) {
+      const greetingNamePatterns = [
+        /(?:hi|hello|g'day),?\s+(?:this is |i'm |it's |my name is )?([a-zA-Z]+)/i,
+        /(?:speaking),?\s+(?:this is |it's )?([a-zA-Z]+)/i,
+        /^([A-Z][a-z]+)\s+speaking/i  // "John speaking"
+      ];
+      
+      for (const pattern of greetingNamePatterns) {
+        const match = userInput.match(pattern);
+        if (match?.[1]) {
+          const name = match[1].trim();
+          // Avoid common greeting words
+          const greetingWords = ['there', 'mate', 'sir', 'madam', 'you'];
+          if (!greetingWords.includes(name.toLowerCase()) && name.length >= 2) {
+            extractedInfo.name = name;
+            break;
+          }
+        }
+      }
     }
     
     return extractedInfo;
