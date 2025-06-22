@@ -32,22 +32,20 @@ const twilioRoutes: FastifyPluginAsync = async function (fastify) {
       fastify.log.info('Conversation initialized', { CallSid, From });
 
       // Return TwiML with speech recognition using OpenAI TTS
-      const webhookUrl = `https://${request.headers.host}`;
+      const webhookUrl = process.env.WEBHOOK_BASE_URL || `https://${request.headers.host}`;
       const gatherUrl = webhookUrl + '/twilio/gather';
       
       // Generate proper OpenAI TTS for greeting
       const greetingAudio = await ttsCacheManager.getAudioElement("G'day! Thanks for calling. I'm Johnno, your AI assistant. How can I help you today?", CallSid);
-      const fallbackAudio = await ttsCacheManager.getAudioElement("Sorry, I didn't hear you. Please tell me how I can help you today.", CallSid);
-      const goodbyeAudio = await ttsCacheManager.getAudioElement("Thanks for calling! Have a great day!", CallSid);
       
+      // FIXED: Put everything in Gather to prevent immediate hangup if audio fails
       const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Gather input="speech" timeout="6" speechTimeout="2" action="${gatherUrl}">
+    <Gather input="speech" timeout="6" speechTimeout="1.2" action="${gatherUrl}">
         ${greetingAudio}
+        <Pause length="0.2"/>
     </Gather>
-    ${fallbackAudio}
-    ${goodbyeAudio}
-    <Hangup/>
+    <Redirect>${gatherUrl}</Redirect>
 </Response>`;
 
       fastify.log.debug('Sending TwiML response', { CallSid });
@@ -170,8 +168,6 @@ const twilioRoutes: FastifyPluginAsync = async function (fastify) {
       if (continueConversation) {
         // Generate OpenAI TTS for the response
         const responseAudio = await ttsCacheManager.getAudioElement(responseText, CallSid);
-        const retryAudio = await ttsCacheManager.getAudioElement("I didn't catch that. Could you please repeat your response?", CallSid);
-        const goodbyeAudio = await ttsCacheManager.getAudioElement("Thanks for calling! Have a great day!", CallSid);
         
         // Only add follow-up prompt if the response doesn't already include a question
         const hasQuestion = responseText.includes('?') || responseText.toLowerCase().includes('can i') || responseText.toLowerCase().includes('would you like');
@@ -180,23 +176,21 @@ const twilioRoutes: FastifyPluginAsync = async function (fastify) {
           // Response already has a question, just listen for answer
           responseTwiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Gather input="speech" timeout="6" speechTimeout="2" action="${gatherUrl}">
+    <Gather input="speech" timeout="6" speechTimeout="1.2" action="${gatherUrl}">
         ${responseAudio}
+        <Pause length="0.2"/>
     </Gather>
-    ${retryAudio}
-    ${goodbyeAudio}
-    <Hangup/>
+    <Redirect>${gatherUrl}</Redirect>
 </Response>`;
         } else {
           // Response is a statement, add a subtle follow-up
           responseTwiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
     ${responseAudio}
-    <Gather input="speech" timeout="6" speechTimeout="2" action="${gatherUrl}">
+    <Gather input="speech" timeout="6" speechTimeout="1.2" action="${gatherUrl}">
+        <Pause length="0.2"/>
     </Gather>
-    ${retryAudio}
-    ${goodbyeAudio}
-    <Hangup/>
+    <Redirect>${gatherUrl}</Redirect>
 </Response>`;
         }
       } else {

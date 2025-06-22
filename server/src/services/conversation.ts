@@ -224,7 +224,7 @@ export class ConversationService {
         try {
           const knowledgeStartTime = Date.now();
           
-          // Add timeout to knowledge search to prevent long delays
+          // Add aggressive timeout to knowledge search for snappy responses
           relevantKnowledge = await Promise.race([
             knowledgeService.getContextualKnowledge(
               context.tenantId,
@@ -234,9 +234,9 @@ export class ConversationService {
             ),
             new Promise<null>((resolve) => 
               setTimeout(() => {
-                console.log('Knowledge search timed out after 5 seconds');
+                console.log('Knowledge search timed out after 1 second (aggressive)');
                 resolve(null);
-              }, 5000)
+              }, 1000)
             )
           ]);
           
@@ -274,7 +274,7 @@ export class ConversationService {
           max_tokens: 150,
         }),
         new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('GPT-4 API timeout after 15 seconds')), 15000)
+          setTimeout(() => reject(new Error('GPT-4 API timeout after 5 seconds (aggressive)')), 5000)
         )
       ]) as any;
 

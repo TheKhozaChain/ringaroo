@@ -128,14 +128,14 @@ export class OpenAITTSService implements TTSService {
         input: text,
         voice: this.voice,
         response_format: 'mp3', // Twilio supports MP3
-        speed: 1.0, // Normal speed for natural conversation
+        speed: 1.15, // Noticeably faster for snappy responses
       }, {
         headers: {
           'Authorization': `Bearer ${this.apiKey}`,
           'Content-Type': 'application/json',
         },
         responseType: 'arraybuffer',
-        timeout: 8000, // 8 seconds - reasonable timeout for demo
+        timeout: 5000, // 5 seconds - ensure we get OpenAI TTS
       });
 
       return Buffer.from(response.data);
@@ -180,7 +180,7 @@ export class TTSAudioManager implements TTSAudioService {
   private readonly ttsService: TTSService;
   private readonly audioDir: string;
   private readonly baseUrl: string;
-  private readonly maxFileAge: number = 3600000; // 1 hour in milliseconds
+  private readonly maxFileAge: number = 7200000; // 2 hours in milliseconds - prevent premature cleanup
 
   constructor(ttsService: TTSService) {
     this.ttsService = ttsService;
@@ -270,39 +270,24 @@ class TTSCacheManager {
 
   constructor(ttsAudioManager: TTSAudioManager) {
     this.ttsAudioManager = ttsAudioManager;
-    this.preGenerateCommonPhrases();
+    // Clear any existing cache to prevent 404 errors
+    this.cache.clear();
+    // Pre-generate common phrases in background to avoid timeouts
+    setTimeout(() => this.preGenerateCommonPhrases(), 1000);
   }
 
   private async preGenerateCommonPhrases(): Promise<void> {
-    // Pre-generate common phrases in background
-    const commonPhrases = [
+    // Pre-generate only the most critical phrases
+    const criticalPhrases = [
       "G'day! Thanks for calling. I'm Johnno, your AI assistant. How can I help you today?",
-      "Sorry, I didn't hear you. Please tell me how I can help you today.",
-      "Thanks for calling! Have a great day!",
-      "I can help you with bookings, questions about our services, or general information.",
-      "Let me help you with that booking.",
-      "What service would you like to book?",
-      "What day works best for you?",
-      "Sorry mate, I'm having a bit of trouble right now. Please try again.",
-      
-      // Expanded common responses
-      "G'day mate! We offer a range of services. Could you let me know more about what you're after? I'll do my best to help!",
-      "G'day mate! We offer a range of services like facial treatments, massage therapy, and bridal packages. Could you let me know what you're after, and I'll do my best to assist?",
       "I didn't catch that. Could you please repeat your response?",
-      "Sorry, I missed that. Could you please tell me your booking details again?",
-      "Could you please tell me your name for the booking?",
-      "What time would you prefer for your appointment?",
-      "Perfect! I can help you with that. What's your name for the booking?",
-      "Great! I'd be happy to help you with a booking. What service are you interested in?",
-      "Absolutely! We can arrange that for you. When would you like to book?",
-      "No worries! I understand. What can I help you with instead?",
-      "That sounds perfect! Let me get those details for you.",
-      "Excellent choice! What day would work best for you?"
+      "Sorry, I didn't hear you. Please tell me how I can help you today?",
+      "Thanks for calling! Have a great day!"
     ];
 
     // Generate in background without blocking
     Promise.all(
-      commonPhrases.map(async (phrase) => {
+      criticalPhrases.map(async (phrase) => {
         try {
           const url = await this.ttsAudioManager.generateAudioUrl(phrase);
           this.cache.set(phrase, url);
@@ -316,24 +301,36 @@ class TTSCacheManager {
 
   private getTimeoutForText(text: string): number {
     const length = text.length;
-    if (length <= 50) return 2000;      // 2 seconds for short text
-    if (length <= 100) return 3000;     // 3 seconds for medium text
-    return 4000;                        // 4 seconds for long text
+    if (length <= 50) return 1000;      // 1 second for short text (aggressive)
+    if (length <= 100) return 1500;     // 1.5 seconds for medium text (aggressive)
+    return 2000;                        // 2 seconds for long text (aggressive)
   }
 
   async getAudioElement(text: string, callId?: string): Promise<string> {
-    // Check cache first for instant OpenAI TTS
+    // Check cache first for instant response
     const cachedUrl = this.cache.get(text);
     if (cachedUrl) {
-      console.log(`Using cached OpenAI TTS: "${text.substring(0, 30)}..."`);
-      return `<Play>${cachedUrl}</Play>`;
+      // Verify the cached file still exists before using it
+      try {
+        const fileName = cachedUrl.split('/').pop();
+        if (fileName) {
+          const fullPath = require('path').join(process.cwd(), 'temp', 'audio', fileName);
+          await require('fs/promises').access(fullPath);
+          console.log(`✅ Using cached OpenAI TTS: "${text.substring(0, 30)}..."`);
+          return `<Play>${cachedUrl}</Play>`;
+        }
+      } catch (error) {
+        // File no longer exists, remove from cache and regenerate
+        console.log(`Cached audio file no longer exists, regenerating: "${text.substring(0, 30)}..."`);
+        this.cache.delete(text);
+      }
     }
 
-    // 100% OpenAI TTS - NO FALLBACKS - Use proper async/await
-    console.log(`🎯 FORCING 100% OpenAI TTS for: "${text.substring(0, 30)}..." (${text.length} chars) - NO FALLBACKS`);
+    // 100% OpenAI TTS - ABSOLUTELY NO FALLBACKS
+    console.log(`🎯 Generating OpenAI TTS for: "${text.substring(0, 30)}..." (${text.length} chars)`);
     
     const startTime = Date.now();
-    const maxWaitTime = 8000; // Maximum 8 seconds for demo responsiveness
+    const maxWaitTime = 5000; // 5 seconds - wait longer to ensure OpenAI TTS
 
     try {
         // Use Promise.race for proper timeout handling
@@ -346,17 +343,31 @@ class TTSCacheManager {
 
         const duration = Date.now() - startTime;
         this.cache.set(text, url);
-        console.log(`🎉 100% OpenAI TTS SUCCESS: "${text.substring(0, 30)}..." -> ${url} (${duration}ms)`);
+        console.log(`🎉 OpenAI TTS SUCCESS: "${text.substring(0, 30)}..." -> ${url} (${duration}ms)`);
+        
+        // Verify the URL format
+        if (!url || !url.startsWith('http')) {
+            console.error(`⚠️ Invalid audio URL generated: ${url}`);
+            throw new Error('Invalid audio URL generated');
+        }
+        
         return `<Play>${url}</Play>`;
 
     } catch (error: any) {
         const duration = Date.now() - startTime;
-        console.error(`🚨 SYSTEM FAILURE: OpenAI TTS failed after ${duration}ms for: "${text.substring(0, 30)}..." - Error: ${error.message}`);
+        console.error(`⚠️ OpenAI TTS failed after ${duration}ms for: "${text.substring(0, 30)}..." - Error: ${error.message}`);
         
-        // Last resort: Return a basic message but log as critical failure
-        console.error(`🚨 CRITICAL: Returning emergency fallback - This indicates a serious system problem!`);
-        const sanitizedText = this.sanitizeForXML("I'm having technical difficulties. Please try calling back in a moment.");
-        return `<Say voice="man">${sanitizedText}</Say>`;
+        // NO FALLBACK - Generate in background and return empty
+        // This ensures ONLY OpenAI TTS is heard
+        this.ttsAudioManager.generateAudioUrl(text, callId)
+            .then(url => {
+                this.cache.set(text, url);
+                console.log(`✅ Background OpenAI TTS cached: "${text.substring(0, 30)}..." -> ${url}`);
+            })
+            .catch(err => console.error('Background TTS failed:', err));
+        
+        // Return empty - NO BASIC TTS EVER
+        return '';
     }
   }
 

@@ -14,8 +14,8 @@ export interface TwiMLOptions {
 }
 
 export class TwiMLGenerator {
-  private static readonly DEFAULT_TIMEOUT = 6;
-  private static readonly DEFAULT_SPEECH_TIMEOUT = 2;
+  private static readonly DEFAULT_TIMEOUT = 8; // Allow greeting to play fully  
+  private static readonly DEFAULT_SPEECH_TIMEOUT = 1.2; // Aggressive for snappy responses
   private static readonly DEFAULT_MAX_RETRIES = 2;
 
   /**
@@ -25,7 +25,7 @@ export class TwiMLGenerator {
     const {
       message,
       expectsResponse,
-      timeout = this.DEFAULT_TIMEOUT,
+      timeout = this.getTimeoutForText(options.message), // Use dynamic timeout
       speechTimeout = this.DEFAULT_SPEECH_TIMEOUT,
       retryMessage = "Sorry, I didn't hear you. Could you please repeat that?",
       action,
@@ -192,14 +192,41 @@ export class TwiMLGenerator {
   private static getTimeoutForStep(step: string): number {
     switch (step) {
       case 'greeting':
-        return 8; // Reduced time for initial response
+        return 3; // Fast initial response
       case 'collecting_info':
-        return 6; // Reduced time for info collection
+        return 2.5; // Very fast info collection
       case 'booking':
-        return 8; // Reduced time for booking details
+        return 4; // Reduced booking time
       default:
         return this.DEFAULT_TIMEOUT;
     }
+  }
+
+  /**
+   * Calculate dynamic timeout based on text length and complexity
+   */
+  private static getTimeoutForText(text: string): number {
+    const wordCount = text.split(' ').length;
+    const hasQuestion = text.includes('?');
+    const isComplex = text.includes('emergency') || text.includes('booking') || text.includes('termite');
+    
+    // Base timeout calculation - much more aggressive
+    let timeout = this.DEFAULT_TIMEOUT;
+    
+    // Adjust for text length - smaller adjustments
+    if (wordCount > 20) {
+      timeout += 0.5; // Less additional time for long responses
+    } else if (wordCount < 10) {
+      timeout -= 0.5; // Faster for short responses
+    }
+    
+    // Adjust for complexity - minimal addition
+    if (isComplex || hasQuestion) {
+      timeout += 0.5; // Small bump for complex topics
+    }
+    
+    // Tighter bounds for snappy responses
+    return Math.max(2, Math.min(timeout, 4));
   }
 
   /**
