@@ -6,12 +6,24 @@ Ringaroo provides an AI-powered phone receptionist that answers calls, books app
 
 ## 🎯 Features
 
+### Core AI Capabilities
 - **24/7 AI Receptionist ("Johnno")** - Friendly Australian AI that never misses a call
-- **Seamless Booking Integration** - Direct integration with Cliniko and other practice management systems
 - **Real-time Call Processing** - Sub-1-second response times using OpenAI Whisper + GPT-4o
 - **Knowledge Base Integration** - Answers questions using your business's own website/FAQ content
 - **Smart Call Routing** - Escalates complex issues to human staff when needed
-- **Comprehensive Dashboard** - Monitor calls, bookings, and performance metrics
+
+### Booking Management System
+- **Live Booking Dashboard** - Real-time booking feed with priority indicators
+- **Smart Technician Assignment** - Automatic recommendations based on service type and availability
+- **Calendar Integration** - Interactive calendar view with conflict detection and scheduling
+- **Emergency Prioritization** - Automatic detection and flagging of urgent service requests
+- **Availability Checking** - Prevents double-bookings with intelligent time slot management
+
+### Business Integration
+- **Seamless Booking Integration** - Direct integration with Cliniko and other practice management systems
+- **Multi-tenant Architecture** - Support for multiple businesses with isolated data
+- **Professional Dashboard** - Monitor calls, bookings, technician workload, and performance metrics
+- **One-click Actions** - Instant booking confirmation, rescheduling, and status updates
 
 ## 🏗️ Architecture
 
@@ -124,12 +136,34 @@ This will place a test call using your Twilio number and demonstrate the booking
 5. **Booking process** continues until all details are captured
 6. **Appointment created** in Cliniko or via email fallback
 
-### Dashboard Monitoring
+### Dashboard Features
 
-- **Real-time call logs** with full transcripts
-- **Booking management** - view, confirm, or cancel appointments  
-- **Knowledge base** - upload FAQs and business information
-- **Performance metrics** - response times, success rates, cost per call
+#### 📊 Main Dashboard (`http://localhost:5173`)
+- **Live Statistics** - Real-time calls, bookings, and emergency counts
+- **Calendar View** - Interactive monthly calendar with booking visualization
+- **Priority Bookings Sidebar** - Emergency and high-priority booking alerts
+- **Recent Activity Feed** - Latest calls and booking activity
+
+#### 📋 Booking Management (`/bookings`)
+- **Real-time Booking Feed** - Live updates every 30 seconds with priority indicators
+- **Filter Tabs** - View All, Pending, Confirmed, or Cancelled bookings
+- **Emergency Alerts** - Red priority badges for urgent service requests (termite, pest emergencies)
+- **One-click Actions** - Instant confirm, cancel, or reschedule operations
+
+#### 👥 Technician Assignment
+- **Smart Recommendations** - AI-powered technician matching based on:
+  - Service specialties (termite, pest control, commercial services)
+  - Current workload and daily capacity
+  - Emergency contact availability
+  - Geographic service areas
+- **Availability Checking** - Real-time conflict detection and time slot validation
+- **Workload Balancing** - Visual indicators showing technician utilization
+
+#### 📅 Calendar Integration
+- **Monthly View** - Click any date to see detailed booking information
+- **Conflict Detection** - Visual indicators for scheduling conflicts
+- **Emergency Indicators** - Alert triangles for high-priority bookings
+- **Booking Density** - Color-coded calendar showing busy/available dates
 
 ## 🛠️ Development
 

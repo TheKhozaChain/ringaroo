@@ -1,17 +1,17 @@
 import React, { useState } from 'react'
 import { useMutation, useQueryClient, useQuery } from '@tanstack/react-query'
 import { Calendar, Clock, User, Phone, Mail, AlertTriangle, CheckCircle, XCircle, RotateCcw, Zap, UserPlus } from 'lucide-react'
-import { updateBookingStatus, getTechnicians } from '../services/api'
+import { updateBookingStatus, getTechnicians, type Booking } from '../services/api'
 import TechnicianAssignment from './TechnicianAssignment'
 
 interface DayBookingDetailsProps {
   date: Date
-  bookings: any[]
+  bookings: Booking[]
   onClose: () => void
 }
 
 export default function DayBookingDetails({ date, bookings, onClose }: DayBookingDetailsProps) {
-  const [selectedBookingForAssignment, setSelectedBookingForAssignment] = useState<any | null>(null)
+  const [selectedBookingForAssignment, setSelectedBookingForAssignment] = useState<Booking | null>(null)
   const queryClient = useQueryClient()
   
   const { data: technicians = [] } = useQuery({
@@ -28,7 +28,7 @@ export default function DayBookingDetails({ date, bookings, onClose }: DayBookin
     },
   })
 
-  const getPriorityLevel = (booking: any) => {
+  const getPriorityLevel = (booking: Booking) => {
     const emergencyKeywords = ['emergency', 'urgent', 'immediate', 'asap', 'termite', 'rodent', 'infestation']
     const isEmergency = emergencyKeywords.some(keyword => 
       booking.service_type?.toLowerCase().includes(keyword) ||

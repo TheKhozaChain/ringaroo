@@ -1,7 +1,7 @@
 import React, { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Calendar, Phone, Mail, Clock, AlertTriangle, CheckCircle, XCircle, RotateCcw, User, Zap, Star } from 'lucide-react'
-import { getBookings, updateBookingStatus } from '../services/api'
+import { getBookings, updateBookingStatus, type Booking } from '../services/api'
 
 export default function BookingsList() {
   const [filter, setFilter] = useState<'all' | 'pending' | 'confirmed' | 'cancelled'>('all')
@@ -22,7 +22,7 @@ export default function BookingsList() {
     },
   })
 
-  const getPriorityLevel = (booking: any) => {
+  const getPriorityLevel = (booking: Booking) => {
     const now = new Date()
     const preferredDate = booking.preferred_date ? new Date(booking.preferred_date) : null
     const createdAt = new Date(booking.created_at)
@@ -120,7 +120,7 @@ export default function BookingsList() {
 
       {sortedBookings && sortedBookings.length > 0 ? (
         <div className="space-y-4">
-          {sortedBookings.map((booking: any) => {
+          {sortedBookings.map((booking: Booking) => {
             const priority = getPriorityLevel(booking)
             const priorityColors = {
               emergency: 'border-l-red-500 bg-red-50',

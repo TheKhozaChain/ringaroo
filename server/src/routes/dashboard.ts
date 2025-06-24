@@ -4,6 +4,24 @@ import { bookingService } from '@/services/booking';
 import { availabilityService } from '@/services/availability';
 
 export async function dashboardRoutes(fastify: FastifyInstance) {
+  // Helper function to get tenant ID from request
+  const getTenantId = (request: any): string => {
+    // Try to get tenant ID from header first
+    const headerTenantId = request.headers['x-tenant-id'];
+    if (headerTenantId) {
+      return headerTenantId as string;
+    }
+    
+    // Fall back to environment variable for single-tenant mode
+    const envTenantId = process.env.DEFAULT_TENANT_ID;
+    if (envTenantId) {
+      return envTenantId;
+    }
+    
+    // Default tenant for demo/development
+    return '550e8400-e29b-41d4-a716-446655440000';
+  };
+
   // Dashboard stats endpoint
   fastify.get('/api/dashboard/stats', async (request, reply) => {
     try {
@@ -18,8 +36,7 @@ export async function dashboardRoutes(fastify: FastifyInstance) {
   // Get all bookings
   fastify.get('/api/bookings', async (request, reply) => {
     try {
-      // For demo, use the default tenant ID
-      const tenantId = '550e8400-e29b-41d4-a716-446655440000';
+      const tenantId = getTenantId(request);
       const bookings = await bookingService.getBookings(tenantId);
       return bookings;
     } catch (error) {
@@ -67,8 +84,7 @@ export async function dashboardRoutes(fastify: FastifyInstance) {
   // Get all technicians
   fastify.get('/api/technicians', async (request, reply) => {
     try {
-      // For demo, use the default tenant ID
-      const tenantId = '550e8400-e29b-41d4-a716-446655440000';
+      const tenantId = getTenantId(request);
       const technicians = await db.getTechnicians(tenantId);
       return technicians;
     } catch (error) {
@@ -81,7 +97,7 @@ export async function dashboardRoutes(fastify: FastifyInstance) {
   fastify.get('/api/technicians/availability/:date', async (request, reply) => {
     try {
       const { date } = request.params as { date: string };
-      const tenantId = '550e8400-e29b-41d4-a716-446655440000';
+      const tenantId = getTenantId(request);
       
       const targetDate = new Date(date);
       if (isNaN(targetDate.getTime())) {
@@ -116,7 +132,7 @@ export async function dashboardRoutes(fastify: FastifyInstance) {
         serviceType?: string; 
         isEmergency?: boolean; 
       };
-      const tenantId = '550e8400-e29b-41d4-a716-446655440000';
+      const tenantId = getTenantId(request);
       
       const recommendedTechnicians = await db.findBestTechnicianForService(
         tenantId, 
@@ -139,7 +155,7 @@ export async function dashboardRoutes(fastify: FastifyInstance) {
         technicianId?: string; 
         duration?: string; 
       };
-      const tenantId = '550e8400-e29b-41d4-a716-446655440000';
+      const tenantId = getTenantId(request);
       
       const targetDate = new Date(date);
       if (isNaN(targetDate.getTime())) {
@@ -171,7 +187,7 @@ export async function dashboardRoutes(fastify: FastifyInstance) {
         isEmergency?: boolean;
         preferredDate?: string;
       };
-      const tenantId = '550e8400-e29b-41d4-a716-446655440000';
+      const tenantId = getTenantId(request);
       
       const preferred = preferredDate ? new Date(preferredDate) : undefined;
       
@@ -200,7 +216,7 @@ export async function dashboardRoutes(fastify: FastifyInstance) {
         technicianId?: string;
         excludeBookingId?: string;
       };
-      const tenantId = '550e8400-e29b-41d4-a716-446655440000';
+      const tenantId = getTenantId(request);
       
       const targetDate = new Date(date);
       if (isNaN(targetDate.getTime())) {
