@@ -1,6 +1,6 @@
 import { Pool, PoolClient } from 'pg';
 import { appConfig } from '@/config';
-import type { Tenant, Call, Booking, KnowledgeChunk } from '@/types';
+import type { Tenant, Call, Booking, KnowledgeChunk, Technician } from '@/types';
 import { embeddingsService } from './embeddings';
 
 class DatabaseService {
@@ -141,6 +141,104 @@ class DatabaseService {
       values
     );
     return result[0] || null;
+  }
+
+  async getBookings(tenantId: string): Promise<Booking[]> {
+    return this.query<Booking>(
+      'SELECT * FROM ringaroo.bookings WHERE tenant_id = $1 ORDER BY created_at DESC',
+      [tenantId]
+    );
+  }
+
+  async assignTechnician(bookingId: string, technicianId: string): Promise<Booking | null> {
+    const result = await this.query<Booking>(
+      `UPDATE ringaroo.bookings 
+       SET technician_id = $1, assigned_at = NOW(), updated_at = NOW() 
+       WHERE id = $2 RETURNING *`,
+      [technicianId, bookingId]
+    );
+    return result[0] || null;
+  }
+
+  // Technician operations
+  async getTechnicians(tenantId: string): Promise<Technician[]> {
+    return this.query<Technician>(
+      'SELECT * FROM ringaroo.technicians WHERE tenant_id = $1 AND is_active = true ORDER BY name',
+      [tenantId]
+    );
+  }
+
+  async getTechnicianById(technicianId: string): Promise<Technician | null> {
+    const result = await this.query<Technician>(
+      'SELECT * FROM ringaroo.technicians WHERE id = $1',
+      [technicianId]
+    );
+    return result[0] || null;
+  }
+
+  async getTechniciansAvailableForDate(tenantId: string, date: Date): Promise<Technician[]> {
+    const dayOfWeek = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'][date.getDay()];
+    
+    return this.query<Technician>(
+      `SELECT t.* FROM ringaroo.technicians t
+       WHERE t.tenant_id = $1 
+       AND t.is_active = true 
+       AND t.availability->$2 IS NOT NULL`,
+      [tenantId, dayOfWeek]
+    );
+  }
+
+  async getTechnicianBookingsForDate(technicianId: string, date: Date): Promise<Booking[]> {
+    return this.query<Booking>(
+      `SELECT * FROM ringaroo.bookings 
+       WHERE technician_id = $1 
+       AND preferred_date = $2 
+       AND status IN ('confirmed', 'in_progress')
+       ORDER BY preferred_time`,
+      [technicianId, date.toISOString().split('T')[0]]
+    );
+  }
+
+  async findBestTechnicianForService(tenantId: string, serviceType: string, isEmergency: boolean = false): Promise<Technician[]> {
+    const baseQuery = `
+      SELECT t.*, 
+             COALESCE(daily_bookings.count, 0) as current_bookings
+      FROM ringaroo.technicians t
+      LEFT JOIN (
+        SELECT technician_id, COUNT(*) as count
+        FROM ringaroo.bookings 
+        WHERE preferred_date = CURRENT_DATE 
+        AND status IN ('confirmed', 'in_progress')
+        GROUP BY technician_id
+      ) daily_bookings ON t.id = daily_bookings.technician_id
+      WHERE t.tenant_id = $1 
+      AND t.is_active = true
+      AND COALESCE(daily_bookings.count, 0) < t.max_daily_bookings
+    `;
+
+    const params = [tenantId];
+    let whereClause = '';
+
+    if (isEmergency) {
+      whereClause += ' AND t.emergency_contact = true';
+    }
+
+    if (serviceType) {
+      whereClause += ` AND $${params.length + 1} = ANY(t.specialties)`;
+      params.push(serviceType);
+    }
+
+    const orderClause = `
+      ORDER BY 
+        t.emergency_contact DESC,
+        COALESCE(daily_bookings.count, 0) ASC,
+        t.name
+    `;
+
+    return this.query<Technician & { current_bookings: number }>(
+      baseQuery + whereClause + orderClause,
+      params
+    );
   }
 
   // Knowledge operations

@@ -20,6 +20,20 @@ export interface DashboardStats {
   }>
 }
 
+export interface Technician {
+  id: string
+  name: string
+  email?: string
+  phone?: string
+  specialties: string[]
+  availability: Record<string, { start: string; end: string }>
+  maxDailyBookings: number
+  isActive: boolean
+  emergencyContact: boolean
+  bookingsCount?: number
+  bookings?: Booking[]
+}
+
 export interface Booking {
   id: string
   customer_name: string
@@ -28,7 +42,13 @@ export interface Booking {
   service_type: string
   preferred_date?: string
   preferred_time?: string
-  status: 'pending' | 'confirmed' | 'cancelled'
+  technician_id?: string
+  estimated_duration: number
+  priority_level: 'low' | 'normal' | 'high' | 'emergency'
+  status: 'pending' | 'confirmed' | 'in_progress' | 'completed' | 'cancelled'
+  assigned_at?: string
+  confirmed_at?: string
+  completed_at?: string
   created_at: string
   updated_at: string
 }
@@ -45,8 +65,37 @@ export const getBookings = async (): Promise<Booking[]> => {
 
 export const updateBookingStatus = async (
   bookingId: string, 
-  status: 'pending' | 'confirmed' | 'cancelled'
+  status: 'pending' | 'confirmed' | 'in_progress' | 'completed' | 'cancelled'
 ): Promise<Booking> => {
   const response = await api.patch(`/api/bookings/${bookingId}`, { status })
+  return response.data
+}
+
+export const assignTechnician = async (
+  bookingId: string,
+  technicianId: string | null
+): Promise<Booking> => {
+  const response = await api.patch(`/api/bookings/${bookingId}`, { technicianId })
+  return response.data
+}
+
+export const getTechnicians = async (): Promise<Technician[]> => {
+  const response = await api.get('/api/technicians')
+  return response.data
+}
+
+export const getTechnicianAvailability = async (date: string): Promise<Technician[]> => {
+  const response = await api.get(`/api/technicians/availability/${date}`)
+  return response.data
+}
+
+export const getRecommendedTechnicians = async (
+  serviceType?: string,
+  isEmergency?: boolean
+): Promise<Technician[]> => {
+  const response = await api.post('/api/technicians/recommend', {
+    serviceType,
+    isEmergency
+  })
   return response.data
 }

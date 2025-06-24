@@ -102,19 +102,40 @@ export interface ActionRecord {
   errorMessage?: string;
 }
 
+export interface Technician {
+  id: string;
+  tenantId: string;
+  name: string;
+  email?: string;
+  phone?: string;
+  specialties: string[];
+  availability: Record<string, { start: string; end: string }>;
+  maxDailyBookings: number;
+  isActive: boolean;
+  emergencyContact: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 export interface Booking {
   id: string;
   tenantId: string;
   callId?: string;
+  technicianId?: string;
   customerName?: string;
   customerPhone?: string;
   customerEmail?: string;
   serviceType?: string;
   preferredDate?: Date;
   preferredTime?: string;
+  estimatedDuration: number; // Duration in minutes
+  priorityLevel: 'low' | 'normal' | 'high' | 'emergency';
   notes?: string;
-  status: 'pending' | 'confirmed' | 'cancelled';
+  status: 'pending' | 'confirmed' | 'in_progress' | 'completed' | 'cancelled';
   externalBookingId?: string;
+  assignedAt?: Date;
+  confirmedAt?: Date;
+  completedAt?: Date;
   createdAt: Date;
   updatedAt: Date;
 }

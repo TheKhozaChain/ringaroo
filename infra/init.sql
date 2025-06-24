@@ -63,20 +63,42 @@ CREATE TABLE IF NOT EXISTS ringaroo.calls (
     ended_at TIMESTAMP WITH TIME ZONE
 );
 
+-- Create technicians table
+CREATE TABLE IF NOT EXISTS ringaroo.technicians (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    tenant_id UUID NOT NULL REFERENCES ringaroo.tenants(id) ON DELETE CASCADE,
+    name VARCHAR(255) NOT NULL,
+    email VARCHAR(255),
+    phone VARCHAR(20),
+    specialties TEXT[], -- Array of service specialties
+    availability JSONB DEFAULT '{"mon": {"start": "09:00", "end": "17:00"}, "tue": {"start": "09:00", "end": "17:00"}, "wed": {"start": "09:00", "end": "17:00"}, "thu": {"start": "09:00", "end": "17:00"}, "fri": {"start": "09:00", "end": "17:00"}}',
+    max_daily_bookings INTEGER DEFAULT 8,
+    is_active BOOLEAN DEFAULT true,
+    emergency_contact BOOLEAN DEFAULT false,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
 -- Create bookings table
 CREATE TABLE IF NOT EXISTS ringaroo.bookings (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     tenant_id UUID NOT NULL REFERENCES ringaroo.tenants(id) ON DELETE CASCADE,
     call_id UUID REFERENCES ringaroo.calls(id) ON DELETE SET NULL,
+    technician_id UUID REFERENCES ringaroo.technicians(id) ON DELETE SET NULL,
     customer_name VARCHAR(255),
     customer_phone VARCHAR(20),
     customer_email VARCHAR(255),
     service_type VARCHAR(255),
     preferred_date DATE,
     preferred_time TIME,
+    estimated_duration INTEGER DEFAULT 120, -- Duration in minutes
+    priority_level VARCHAR(20) DEFAULT 'normal' CHECK (priority_level IN ('low', 'normal', 'high', 'emergency')),
     notes TEXT,
-    status VARCHAR(20) DEFAULT 'pending' CHECK (status IN ('pending', 'confirmed', 'cancelled')),
+    status VARCHAR(20) DEFAULT 'pending' CHECK (status IN ('pending', 'confirmed', 'in_progress', 'completed', 'cancelled')),
     external_booking_id VARCHAR(255), -- For Cliniko or other systems
+    assigned_at TIMESTAMP WITH TIME ZONE,
+    confirmed_at TIMESTAMP WITH TIME ZONE,
+    completed_at TIMESTAMP WITH TIME ZONE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
@@ -87,6 +109,9 @@ CREATE INDEX IF NOT EXISTS idx_knowledge_chunks_embedding ON ringaroo.knowledge_
 CREATE INDEX IF NOT EXISTS idx_calls_tenant_id ON ringaroo.calls(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_calls_started_at ON ringaroo.calls(started_at);
 CREATE INDEX IF NOT EXISTS idx_bookings_tenant_id ON ringaroo.bookings(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_bookings_technician_id ON ringaroo.bookings(technician_id);
+CREATE INDEX IF NOT EXISTS idx_bookings_preferred_date ON ringaroo.bookings(preferred_date);
+CREATE INDEX IF NOT EXISTS idx_technicians_tenant_id ON ringaroo.technicians(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_knowledge_sources_tenant_id ON ringaroo.knowledge_sources(tenant_id);
 
 -- Insert demo tenant for development
@@ -113,6 +138,14 @@ VALUES (
     NOW()
 ) ON CONFLICT DO NOTHING;
 
+-- Insert demo technicians
+INSERT INTO ringaroo.technicians (id, tenant_id, name, email, phone, specialties, emergency_contact) VALUES
+    ('tech-001', '550e8400-e29b-41d4-a716-446655440000', 'Mike Johnson', 'mike@pestblitz.com.au', '+61423456789', '{"termite inspection", "general pest control", "rodent control"}', true),
+    ('tech-002', '550e8400-e29b-41d4-a716-446655440000', 'Sarah Wilson', 'sarah@pestblitz.com.au', '+61434567890', '{"commercial pest control", "termite treatment", "emergency services"}', true),
+    ('tech-003', '550e8400-e29b-41d4-a716-446655440000', 'Dave Brown', 'dave@pestblitz.com.au', '+61445678901', '{"residential pest control", "lawn treatments", "preventative services"}', false),
+    ('tech-004', '550e8400-e29b-41d4-a716-446655440000', 'Lisa Chen', 'lisa@pestblitz.com.au', '+61456789012', '{"eco-friendly treatments", "ant control", "spider treatments"}', false)
+ON CONFLICT DO NOTHING;
+
 -- Create update trigger for updated_at columns
 CREATE OR REPLACE FUNCTION update_updated_at_column()
 RETURNS TRIGGER AS $$
@@ -124,4 +157,5 @@ $$ language 'plpgsql';
 
 CREATE TRIGGER update_tenants_updated_at BEFORE UPDATE ON ringaroo.tenants FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 CREATE TRIGGER update_knowledge_sources_updated_at BEFORE UPDATE ON ringaroo.knowledge_sources FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE TRIGGER update_technicians_updated_at BEFORE UPDATE ON ringaroo.technicians FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 CREATE TRIGGER update_bookings_updated_at BEFORE UPDATE ON ringaroo.bookings FOR EACH ROW EXECUTE FUNCTION update_updated_at_column(); 
