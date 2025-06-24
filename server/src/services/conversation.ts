@@ -541,6 +541,13 @@ ${context.customerInfo?.preferredService ? `- Service interest: ${context.custom
   private detectIntent(userInput: string): string {
     const input = userInput.toLowerCase();
     
+    // Check for emergency + service patterns first (highest priority)
+    if ((input.includes('emergency') || input.includes('urgent')) && 
+        (input.includes('termite') || input.includes('pest') || input.includes('cockroach') || 
+         input.includes('ant') || input.includes('spider') || input.includes('rodent'))) {
+      return 'booking'; // Emergency pest issues should be treated as booking requests
+    }
+    
     if (input.includes('hello') || input.includes('hi') || input.includes('g\'day')) {
       return 'greeting';
     } else if (input.includes('book') || input.includes('appointment') || input.includes('schedule')) {
@@ -646,43 +653,60 @@ ${context.customerInfo?.preferredService ? `- Service interest: ${context.custom
       extractedInfo.email = emailMatch[1].trim();
     }
     
-    // Extract service preferences for booking intent
-    if (intent === 'booking') {
-      // Medical services
-      const medicalServices = ['consultation', 'checkup', 'appointment', 'treatment', 'exam', 'visit'];
-      // Electrician services  
-      const electricianServices = ['electrical', 'wiring', 'power', 'outlet', 'switch', 'emergency', 'repair'];
-      // Beauty services
-      const beautyServices = ['facial', 'massage', 'eyebrow', 'eyelash', 'nail', 'wax', 'beauty', 'treatment'];
-      
-      const allServices = [...medicalServices, ...electricianServices, ...beautyServices];
-      
-      for (const service of allServices) {
-        if (userInput.toLowerCase().includes(service)) {
-          extractedInfo.preferredService = service;
-          break;
-        }
+    // Extract service preferences (check for any intent, not just booking)
+    // Pest control services (primary business)
+    const pestControlServices = [
+      'termite', 'termites', 'termite emergency', 'termite treatment', 'termite inspection',
+      'cockroach', 'cockroaches', 'cockroach treatment', 'roach', 'roaches',
+      'ant', 'ants', 'ant control', 'ant treatment',
+      'spider', 'spiders', 'spider control', 'spider treatment',
+      'rodent', 'rodents', 'rat', 'rats', 'mouse', 'mice', 'rodent control',
+      'pest control', 'pest treatment', 'pest inspection', 'pest emergency',
+      'residential pest control', 'commercial pest control',
+      'emergency pest', 'urgent pest'
+    ];
+    
+    // Other services (fallback)
+    const otherServices = [
+      'consultation', 'checkup', 'appointment', 'treatment', 'exam', 'visit',
+      'electrical', 'wiring', 'power', 'outlet', 'switch', 'emergency', 'repair',
+      'facial', 'massage', 'eyebrow', 'eyelash', 'nail', 'wax', 'beauty'
+    ];
+    
+    const allServices = [...pestControlServices, ...otherServices];
+    
+    // Check for service matches (prioritize longer matches first)
+    const sortedServices = allServices.sort((a, b) => b.length - a.length);
+    for (const service of sortedServices) {
+      if (userInput.toLowerCase().includes(service)) {
+        extractedInfo.preferredService = service;
+        console.log(`✅ Extracted service: "${service}" from input: "${userInput}"`);
+        break;
       }
-      
-      // Extract time preferences
-      const timeMatch = userInput.match(/(?:at |around |about |for )([0-9]{1,2}(?::[0-9]{2})?\s?(?:am|pm|AM|PM)?)/i);
-      if (timeMatch?.[1]) {
-        extractedInfo.preferredTime = timeMatch[1].trim();
-      }
-      
-      // Extract date preferences
-      const datePatterns = [
-        /(?:on |for )(today|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday)/i,
-        /(?:on |for )([0-9]{1,2}(?:st|nd|rd|th)?\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*)/i,
-        /(?:on |for )([0-9]{1,2}\/[0-9]{1,2}(?:\/[0-9]{2,4})?)/i
-      ];
-      
-      for (const pattern of datePatterns) {
-        const dateMatch = userInput.match(pattern);
-        if (dateMatch?.[1]) {
-          extractedInfo.preferredDate = dateMatch[1].trim();
-          break;
-        }
+    }
+    
+    if (!extractedInfo.preferredService) {
+      console.log(`❌ Could not extract service from input: "${userInput}"`);
+    }
+    
+    // Extract time preferences
+    const timeMatch = userInput.match(/(?:at |around |about |for )([0-9]{1,2}(?::[0-9]{2})?\s?(?:am|pm|AM|PM)?)/i);
+    if (timeMatch?.[1]) {
+      extractedInfo.preferredTime = timeMatch[1].trim();
+    }
+    
+    // Extract date preferences
+    const datePatterns = [
+      /(?:on |for )(today|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday)/i,
+      /(?:on |for )([0-9]{1,2}(?:st|nd|rd|th)?\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*)/i,
+      /(?:on |for )([0-9]{1,2}\/[0-9]{1,2}(?:\/[0-9]{2,4})?)/i
+    ];
+    
+    for (const pattern of datePatterns) {
+      const dateMatch = userInput.match(pattern);
+      if (dateMatch?.[1]) {
+        extractedInfo.preferredDate = dateMatch[1].trim();
+        break;
       }
     }
     
