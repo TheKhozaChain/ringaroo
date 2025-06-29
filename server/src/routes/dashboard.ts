@@ -22,7 +22,17 @@ export async function dashboardRoutes(fastify: FastifyInstance) {
     return '550e8400-e29b-41d4-a716-446655440000';
   };
 
-  // Dashboard stats endpoint
+  // Dashboard stats endpoint (both routes for compatibility)
+  fastify.get('/api/dashboard', async (request, reply) => {
+    try {
+      const stats = await db.getDashboardStats();
+      return stats;
+    } catch (error) {
+      console.error('Failed to get dashboard stats:', error);
+      return reply.status(500).send({ error: 'Failed to get dashboard stats' });
+    }
+  });
+
   fastify.get('/api/dashboard/stats', async (request, reply) => {
     try {
       const stats = await db.getDashboardStats();
@@ -61,7 +71,7 @@ export async function dashboardRoutes(fastify: FastifyInstance) {
         // Assign or unassign technician
         updatedBooking = technicianId 
           ? await db.assignTechnician(id, technicianId)
-          : await db.updateBooking(id, { technicianId: null });
+          : await db.updateBooking(id, { technicianId: undefined });
       } else if (status) {
         // Update booking status
         updatedBooking = await bookingService.updateBookingStatus(id, status, notes);

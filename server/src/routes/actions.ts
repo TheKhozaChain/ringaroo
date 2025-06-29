@@ -80,6 +80,8 @@ const actionsRoutes: FastifyPluginAsync = async function (fastify) {
         preferredDate: new Date(preferredDate),
         preferredTime,
         notes,
+        estimatedDuration: 60,
+        priorityLevel: 'normal',
         status: 'confirmed',
         externalBookingId: clinikoResult.appointmentId,
       });
@@ -249,6 +251,8 @@ async function createEmailBooking(bookingData: {
   const booking = await db.createBooking({
     ...bookingData,
     preferredDate: new Date(bookingData.preferredDate),
+    estimatedDuration: 60,
+    priorityLevel: 'normal',
     status: 'pending',
   });
 

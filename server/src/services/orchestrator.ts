@@ -297,6 +297,8 @@ class OrchestratorService {
       serviceType: parameters.serviceType as string,
       preferredDate: parameters.preferredDate ? new Date(parameters.preferredDate as string) : undefined,
       preferredTime: parameters.preferredTime as string,
+      estimatedDuration: 60,
+      priorityLevel: 'normal' as const,
       notes: parameters.notes as string,
       status: 'pending' as const,
     };

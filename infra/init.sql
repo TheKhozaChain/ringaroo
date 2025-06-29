@@ -60,7 +60,8 @@ CREATE TABLE IF NOT EXISTS ringaroo.calls (
     cost_cents INTEGER,
     recording_url VARCHAR(500),
     started_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    ended_at TIMESTAMP WITH TIME ZONE
+    ended_at TIMESTAMP WITH TIME ZONE,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
 -- Create technicians table
@@ -139,11 +140,11 @@ VALUES (
 ) ON CONFLICT DO NOTHING;
 
 -- Insert demo technicians
-INSERT INTO ringaroo.technicians (id, tenant_id, name, email, phone, specialties, emergency_contact) VALUES
-    ('tech-001', '550e8400-e29b-41d4-a716-446655440000', 'Mike Johnson', 'mike@pestblitz.com.au', '+61423456789', '{"termite inspection", "general pest control", "rodent control"}', true),
-    ('tech-002', '550e8400-e29b-41d4-a716-446655440000', 'Sarah Wilson', 'sarah@pestblitz.com.au', '+61434567890', '{"commercial pest control", "termite treatment", "emergency services"}', true),
-    ('tech-003', '550e8400-e29b-41d4-a716-446655440000', 'Dave Brown', 'dave@pestblitz.com.au', '+61445678901', '{"residential pest control", "lawn treatments", "preventative services"}', false),
-    ('tech-004', '550e8400-e29b-41d4-a716-446655440000', 'Lisa Chen', 'lisa@pestblitz.com.au', '+61456789012', '{"eco-friendly treatments", "ant control", "spider treatments"}', false)
+INSERT INTO ringaroo.technicians (tenant_id, name, email, phone, specialties, emergency_contact) VALUES
+    ('550e8400-e29b-41d4-a716-446655440000', 'Mike Johnson', 'mike@pestblitz.com.au', '+61423456789', '{"termite inspection", "general pest control", "rodent control"}', true),
+    ('550e8400-e29b-41d4-a716-446655440000', 'Sarah Wilson', 'sarah@pestblitz.com.au', '+61434567890', '{"commercial pest control", "termite treatment", "emergency services"}', true),
+    ('550e8400-e29b-41d4-a716-446655440000', 'Dave Brown', 'dave@pestblitz.com.au', '+61445678901', '{"residential pest control", "lawn treatments", "preventative services"}', false),
+    ('550e8400-e29b-41d4-a716-446655440000', 'Lisa Chen', 'lisa@pestblitz.com.au', '+61456789012', '{"eco-friendly treatments", "ant control", "spider treatments"}', false)
 ON CONFLICT DO NOTHING;
 
 -- Create update trigger for updated_at columns
@@ -158,4 +159,5 @@ $$ language 'plpgsql';
 CREATE TRIGGER update_tenants_updated_at BEFORE UPDATE ON ringaroo.tenants FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 CREATE TRIGGER update_knowledge_sources_updated_at BEFORE UPDATE ON ringaroo.knowledge_sources FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 CREATE TRIGGER update_technicians_updated_at BEFORE UPDATE ON ringaroo.technicians FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-CREATE TRIGGER update_bookings_updated_at BEFORE UPDATE ON ringaroo.bookings FOR EACH ROW EXECUTE FUNCTION update_updated_at_column(); 
+CREATE TRIGGER update_bookings_updated_at BEFORE UPDATE ON ringaroo.bookings FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE TRIGGER update_calls_updated_at BEFORE UPDATE ON ringaroo.calls FOR EACH ROW EXECUTE FUNCTION update_updated_at_column(); 

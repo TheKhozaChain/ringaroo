@@ -69,6 +69,10 @@ class DatabaseService {
       `INSERT INTO ringaroo.calls 
        (tenant_id, twilio_call_sid, caller_number, status, transcript, actions, started_at)
        VALUES ($1, $2, $3, $4, $5, $6, $7)
+       ON CONFLICT (twilio_call_sid) DO UPDATE SET
+         status = EXCLUDED.status,
+         transcript = EXCLUDED.transcript,
+         actions = EXCLUDED.actions
        RETURNING *`,
       [
         call.tenantId,
@@ -162,8 +166,14 @@ class DatabaseService {
 
   // Technician operations
   async getTechnicians(tenantId: string): Promise<Technician[]> {
-    return this.query<Technician>(
-      'SELECT * FROM ringaroo.technicians WHERE tenant_id = $1 AND is_active = true ORDER BY name',
+    return this.query(
+      `SELECT id, tenant_id as "tenantId", name, email, phone, specialties, 
+              availability, max_daily_bookings as "maxDailyBookings", 
+              is_active as "isActive", emergency_contact as "emergencyContact",
+              created_at as "createdAt", updated_at as "updatedAt"
+       FROM ringaroo.technicians 
+       WHERE tenant_id = $1 AND is_active = true 
+       ORDER BY name`,
       [tenantId]
     );
   }

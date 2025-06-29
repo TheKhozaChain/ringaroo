@@ -3,6 +3,7 @@ import { orchestrator } from '@/services/orchestrator';
 import { ttsCacheManager } from '@/services/tts';
 import { speechService, AudioFormat } from '@/services/speech';
 import { conversationService } from '@/services/conversation';
+import { TwiMLGenerator } from '@/services/twiml-generator';
 import OpenAI from 'openai';
 import { appConfig } from '@/config';
 import type { TwilioStreamMessage } from '@/types';
@@ -32,18 +33,18 @@ const twilioRoutes: FastifyPluginAsync = async function (fastify) {
       fastify.log.info('Conversation initialized', { CallSid, From });
 
       // Return TwiML with speech recognition using OpenAI TTS
-      const webhookUrl = process.env.WEBHOOK_BASE_URL || `https://${request.headers.host}`;
+      const webhookUrl = `https://${request.headers.host}`;
       const gatherUrl = webhookUrl + '/twilio/gather';
       
-      // Generate proper OpenAI TTS for greeting
-      const greetingAudio = await ttsCacheManager.getAudioElement("G'day! Thanks for calling. I'm Johnno, your AI assistant. How can I help you today?", CallSid);
+      // Use exact cached OpenAI TTS greeting (line 631 shows it's cached)
+      const greetingMessage = "G'day! Thanks for calling. I'm Johnno, your AI assistant. How can I help you today?";
+      const greetingAudio = await ttsCacheManager.getAudioElement(greetingMessage, CallSid);
       
-      // FIXED: Put everything in Gather to prevent immediate hangup if audio fails
+      // Simplified TwiML with more robust timeouts
       const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Gather input="speech" timeout="6" speechTimeout="1.2" action="${gatherUrl}">
+    <Gather input="speech" timeout="10" speechTimeout="2" action="${gatherUrl}">
         ${greetingAudio}
-        <Pause length="0.2"/>
     </Gather>
     <Redirect>${gatherUrl}</Redirect>
 </Response>`;
@@ -59,14 +60,16 @@ const twilioRoutes: FastifyPluginAsync = async function (fastify) {
         To: (request.body as any)?.To
       });
       
-      // Return error TwiML with fallback to basic Say (in case TTS service is down)
-      const errorTwiml = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-    <Say voice="man">Sorry, we're experiencing technical difficulties. Please try calling back later.</Say>
-    <Hangup />
-</Response>`;
-      
-      reply.status(500).type('text/xml').send(errorTwiml);
+      // FORCE 100% OpenAI TTS - NEVER return JSON error, ALWAYS return TwiML
+      console.log('🚨 CRITICAL: Route error - forcing OpenAI TTS or hangup to prevent Twilio voice fallback');
+      try {
+        const errorTwiml = TwiMLGenerator.generateErrorTwiML("Sorry, we're experiencing technical difficulties. Please try calling back later.");
+        reply.status(200).type('text/xml').send(errorTwiml);
+      } catch (twimlError) {
+        // Last resort - hang up immediately to prevent any Twilio voice
+        console.log('🚨 EMERGENCY: TwiML generation failed - hanging up to maintain 100% OpenAI TTS requirement');
+        reply.status(200).type('text/xml').send(`<?xml version="1.0" encoding="UTF-8"?><Response><Hangup/></Response>`);
+      }
     }
   });
 
@@ -105,6 +108,7 @@ const twilioRoutes: FastifyPluginAsync = async function (fastify) {
 
   // Handle speech input from caller with GPT-4 intelligence
   fastify.post('/twilio/gather', async (request, reply) => {
+    // FORCE 100% OpenAI TTS - wrap everything in try/catch to prevent ANY Twilio fallbacks
     try {
       const { CallSid, SpeechResult, Confidence } = request.body as any;
       
@@ -219,13 +223,16 @@ const twilioRoutes: FastifyPluginAsync = async function (fastify) {
         Confidence
       });
       
-      // Return error TwiML instead of JSON
-      const errorTwiml = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-    <Say voice="man">Sorry mate, I'm having a bit of trouble right now. Please try again.</Say>
-    <Hangup/>
-</Response>`;
-      reply.status(500).type('text/xml').send(errorTwiml);
+      // FORCE 100% OpenAI TTS - NEVER return JSON error, ALWAYS return TwiML
+      console.log('🚨 CRITICAL: Gather endpoint error - forcing OpenAI TTS or hangup to prevent Twilio voice fallback');
+      try {
+        const errorTwiml = TwiMLGenerator.generateErrorTwiML("Sorry mate, I'm having a bit of trouble right now. Please try again.");
+        reply.status(200).type('text/xml').send(errorTwiml);
+      } catch (twimlError) {
+        // Last resort - hang up immediately to prevent any Twilio voice
+        console.log('🚨 EMERGENCY: TwiML generation failed - hanging up to maintain 100% OpenAI TTS requirement');
+        reply.status(200).type('text/xml').send(`<?xml version="1.0" encoding="UTF-8"?><Response><Hangup/></Response>`);
+      }
     }
   });
 
