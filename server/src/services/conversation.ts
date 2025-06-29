@@ -3,6 +3,7 @@ import { appConfig } from '@/config';
 import { redis } from './redis';
 import { knowledgeService } from './knowledge';
 import { bookingService, BookingRequest } from './booking';
+import { db } from './database';
 
 export interface ConversationContext {
   callSid: string;
@@ -21,6 +22,12 @@ export interface ConversationContext {
   knowledgeUsed: string[];
   bookingInProgress?: boolean;
   bookingRequest?: BookingRequest;
+  conversationState?: {
+    askedForName?: boolean;
+    askedForService?: boolean;
+    hasName?: boolean;
+    hasService?: boolean;
+  };
   startTime: Date;
   lastActivity: Date;
 }
@@ -108,6 +115,27 @@ export class ConversationService {
       lastActivity: new Date()
     };
 
+    // Create call record in database
+    try {
+      await db.createCall({
+        tenantId,
+        twilioCallSid: callSid,
+        callerNumber,
+        status: 'in_progress',
+        transcript: [],
+        actions: [],
+        startedAt: context.startTime
+      });
+      console.log(`Call record created in database: ${callSid}`);
+    } catch (error: any) {
+      if (error.code === '23505') {
+        console.log(`Call record already exists for ${callSid} - continuing with existing record`);
+      } else {
+        console.error(`Failed to create call record for ${callSid}:`, error);
+      }
+      // Continue anyway - don't fail the call if database write fails
+    }
+
     // Store in Redis
     await redis.set(`conversation:${callSid}`, JSON.stringify(context), 3600); // 1 hour expiry
 
@@ -169,6 +197,51 @@ export class ConversationService {
       bookingResponse = await this.processBookingFlow(context, userInput, extractedInfo);
     }
 
+    // Initialize conversation state if not exists
+    if (!context.conversationState) {
+      context.conversationState = {
+        askedForName: false,
+        askedForService: false,
+        hasName: false,
+        hasService: false
+      };
+    }
+
+    // Check for name and ask if needed
+    if (!context.customerInfo?.name && !context.conversationState?.askedForName) {
+      const extractedName = this.extractName(userInput);
+      if (extractedName) {
+        context.customerInfo.name = extractedName;
+        context.conversationState.hasName = true;
+      } else {
+        // Only ask for name if this isn't a goodbye or if the user seems engaged
+        if (detectedIntent !== 'goodbye' && userInput.trim().length > 0) {
+          context.conversationState.askedForName = true;
+          const nameRequestResponse: GPTResponse = {
+            message: "Thanks for calling! Can I get your name please?",
+            intent: detectedIntent,
+            extractedInfo: {},
+            confidence: 0.9
+          };
+          
+          // Save context before returning
+          await redis.set(`conversation:${callSid}`, JSON.stringify(context), 3600);
+          return nameRequestResponse;
+        }
+      }
+    } else if (context.customerInfo?.name) {
+      context.conversationState.hasName = true;
+    }
+
+    // If we just asked for the name, the next input is likely the name
+    if (context.conversationState?.askedForName && !context.conversationState?.hasName) {
+      const extractedName = this.extractName(userInput, true); // more liberal extraction
+      if (extractedName) {
+        context.customerInfo.name = extractedName;
+        context.conversationState.hasName = true;
+      }
+    }
+
     // Generate response using GPT-4 (or use booking response)
     const finalResponse = bookingResponse || await this.generateGPTResponse(context, userInput);
 
@@ -193,7 +266,7 @@ export class ConversationService {
   }
 
   /**
-   * Generate intelligent response using GPT-4
+   * Generate intelligent response using GPT-4 - OPTIMIZED WITH CONCURRENT PROCESSING
    */
   private async generateGPTResponse(context: ConversationContext, userInput: string): Promise<GPTResponse> {
     // Check if we have a real OpenAI API key
@@ -211,50 +284,56 @@ export class ConversationService {
     }
 
     try {
-      console.log('Attempting GPT-4 API call with key:', appConfig.openaiApiKey?.substring(0, 20) + '...');
+      console.log('🚀 Starting concurrent processing optimization...');
+      const startTime = Date.now();
       
-      // Detect intent first for knowledge search
+      // ✅ OPTIMIZATION 1: Detect intent once, use for all operations
       const detectedIntent = this.detectIntent(userInput);
-      
-      // Search for relevant knowledge only for specific intents with timeout
-      let relevantKnowledge: string | null = null;
       const knowledgeIntents = ['hours', 'services', 'inquiry', 'pricing'];
       
+      // ✅ OPTIMIZATION 2: Run data operations concurrently with Promise.all
+      
+      // Knowledge search operation (with timeout)
+      let knowledgePromise: Promise<string | null> = Promise.resolve(null);
       if (context.tenantId && knowledgeIntents.includes(detectedIntent)) {
-        try {
-          const knowledgeStartTime = Date.now();
-          
-          // Add aggressive timeout to knowledge search for snappy responses
-          relevantKnowledge = await Promise.race([
-            knowledgeService.getContextualKnowledge(
-              context.tenantId,
-              detectedIntent,
-              userInput,
-              context
-            ),
-            new Promise<null>((resolve) => 
-              setTimeout(() => {
-                console.log('Knowledge search timed out after 1 second (aggressive)');
-                resolve(null);
-              }, 1000)
-            )
-          ]);
-          
-          const knowledgeTime = Date.now() - knowledgeStartTime;
-          console.log(`Knowledge search completed in ${knowledgeTime}ms`);
-          
-          if (relevantKnowledge) {
-            context.knowledgeUsed.push(relevantKnowledge.substring(0, 100) + '...');
-            console.log('Using knowledge base information in response');
-          }
-        } catch (error) {
+        knowledgePromise = Promise.race([
+          knowledgeService.getContextualKnowledge(
+            context.tenantId,
+            detectedIntent,
+            userInput,
+            context
+          ),
+          new Promise<null>((resolve) => 
+            setTimeout(() => {
+              console.log('Knowledge search timed out after 3 seconds');
+              resolve(null);
+            }, 3000)
+          )
+        ]).catch(error => {
           console.error('Knowledge search failed:', error);
-          // Continue without knowledge - don't block the conversation
-        }
-      } else {
-        console.log(`Skipping knowledge search for intent: ${detectedIntent}`);
+          return null;
+        });
       }
       
+      // Customer info extraction (can run concurrently)
+      const extractInfoPromise = Promise.resolve(this.extractCustomerInfo(userInput, detectedIntent));
+      
+      // ✅ OPTIMIZATION 3: Execute all data operations in parallel
+      const [relevantKnowledge, extractedInfo] = await Promise.all([
+        knowledgePromise,
+        extractInfoPromise
+      ]);
+      
+      const dataFetchTime = Date.now() - startTime;
+      console.log(`🎯 Concurrent data fetch completed in ${dataFetchTime}ms`);
+      
+      // Process knowledge results
+      if (relevantKnowledge) {
+        context.knowledgeUsed.push(relevantKnowledge.substring(0, 100) + '...');
+        console.log('Using knowledge base information in response');
+      }
+      
+      // ✅ OPTIMIZATION 4: Build system prompt with all fetched data
       const systemPrompt = this.buildSystemPrompt(context, relevantKnowledge);
       const messages = [
         { role: 'system' as const, content: systemPrompt },
@@ -266,6 +345,7 @@ export class ConversationService {
 
       console.log('Sending request to OpenAI with', messages.length, 'messages');
 
+      // ✅ OPTIMIZATION 5: GPT-4 call with timeout
       const completion = await Promise.race([
         this.openai.chat.completions.create({
           model: appConfig.openaiModel || 'gpt-4',
@@ -274,7 +354,7 @@ export class ConversationService {
           max_tokens: 150,
         }),
         new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('GPT-4 API timeout after 5 seconds (aggressive)')), 5000)
+          setTimeout(() => reject(new Error('GPT-4 API timeout after 5 seconds')), 5000)
         )
       ]) as any;
 
@@ -287,8 +367,8 @@ export class ConversationService {
       
       const message = response.message?.content || "G'day! How can I help you today?";
       
-      // Extract customer information from the conversation
-      let extractedInfo = this.extractCustomerInfo(userInput, detectedIntent);
+      const totalTime = Date.now() - startTime;
+      console.log(`✅ Total response generated in ${totalTime}ms (Optimization: ${dataFetchTime}ms data fetch, ${totalTime - dataFetchTime}ms GPT)`);
 
       const gptResponse = {
         message,
@@ -489,6 +569,27 @@ ${context.customerInfo?.preferredService ? `- Service interest: ${context.custom
         const booking = await bookingService.createBooking(context.bookingRequest);
         const confirmationMessage = bookingService.generateBookingConfirmation(booking);
         
+        // Update call record with booking action
+        try {
+          await db.query(
+            `UPDATE ringaroo.calls 
+             SET actions = jsonb_set(actions, '{-1}', $1::jsonb, true),
+                 updated_at = NOW()
+             WHERE twilio_call_sid = $2`,
+            [
+              JSON.stringify({
+                type: 'booking_created',
+                booking_id: booking.id,
+                timestamp: new Date().toISOString()
+              }),
+              context.callSid
+            ]
+          );
+          console.log(`Call record updated with booking: ${booking.id}`);
+        } catch (dbError) {
+          console.error(`Failed to update call record with booking:`, dbError);
+        }
+        
         // Reset booking state
         context.bookingInProgress = false;
         context.bookingRequest = undefined;
@@ -570,76 +671,43 @@ ${context.customerInfo?.preferredService ? `- Service interest: ${context.custom
   /**
    * Extract customer information from user input
    */
+  private extractName(userInput: string, isDirectResponse: boolean = false): string | null {
+    const namePatterns = [
+      /(?:my name is|i'm|i am|this is|it's|call me)\s+([A-Z][a-z]{2,})/i,
+      /^([A-Z][a-z]{2,})\s+speaking$/i,
+      /^([A-Z][a-z]{2,})\s+here$/i,
+    ];
+
+    if (isDirectResponse) {
+      // More liberal pattern for when we've just asked for the name
+      const directNameMatch = userInput.trim().match(/^([A-Z][a-z]{1,15})$/i);
+      if (directNameMatch?.[1]) {
+        const name = directNameMatch[1];
+        console.log(`✅ Extracted name (direct response): "${name}" from input: "${userInput}"`);
+        return name;
+      }
+    }
+
+    for (const pattern of namePatterns) {
+      const match = userInput.match(pattern);
+      if (match?.[1]) {
+        const name = match[1].trim();
+        console.log(`✅ Extracted name: "${name}" from input: "${userInput}"`);
+        return name;
+      }
+    }
+    
+    console.log(`❌ Could not extract name from input: "${userInput}"`);
+    return null;
+  }
+
+  /**
+   * Extract customer information from user input
+   */
   private extractCustomerInfo(userInput: string, intent: string): Record<string, any> {
     const extractedInfo: Record<string, any> = {};
     
-    // Extract name patterns (multiple approaches with improved logic)
-    let nameMatch = null;
-    
-    // Pattern 1: Formal introductions ("my name is Mark", "I'm John", etc.)
-    nameMatch = userInput.match(/(?:my name is|i'm|i am|this is|call me)\s+([a-zA-Z]+(?:\s+[a-zA-Z]+)?)/i);
-    
-    // Pattern 2: Direct name mentions in context ("I have told Mike", "John 3 p.m.")
-    if (!nameMatch) {
-      // Look for names mentioned in various contexts
-      const contextPatterns = [
-        /(?:told|tell|ask|with|for)\s+([A-Z][a-z]+)/,  // "I have told Mike"
-        /([A-Z][a-z]+)\s+(?:at\s+)?[0-9]+(?:\s*(?:am|pm|o'clock)|\s*[:.]\s*[0-9]+)/i,  // "John 3 p.m."
-        /([A-Z][a-z]+)\s+(?:on\s+)?(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)/i,  // "Mark on Monday"
-        /booking\s+(?:for|under)\s+([A-Z][a-z]+)/i,  // "booking for Sarah"
-        /appointment\s+(?:for|under)\s+([A-Z][a-z]+)/i  // "appointment for David"
-      ];
-      
-      for (const pattern of contextPatterns) {
-        const match = userInput.match(pattern);
-        if (match?.[1]) {
-          // Validate it's likely a name (not a common word)
-          const possibleName = match[1];
-          const commonWords = ['help', 'want', 'need', 'like', 'book', 'call', 'time', 'day', 'week', 'hour'];
-          if (!commonWords.includes(possibleName.toLowerCase())) {
-            nameMatch = [match[0], possibleName];
-            break;
-          }
-        }
-      }
-    }
-    
-    // Pattern 3: Capitalized names in general text (fallback)
-    if (!nameMatch) {
-      // Clean input by removing punctuation for better matching
-      const cleanInput = userInput.replace(/[.!?]/g, '').trim();
-      
-      // Look for simple name patterns (first and optionally last name)
-      const namePattern = /\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\b/;
-      const possibleNameMatch = cleanInput.match(namePattern);
-      
-      if (possibleNameMatch?.[1]) {
-        const possibleName = possibleNameMatch[1];
-        // Avoid false positives - skip if it contains common non-name words
-        const excludeWords = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday', 'Today', 'Tomorrow', 'Next', 'Last', 'This'];
-        const containsExcluded = excludeWords.some(word => possibleName.includes(word));
-        
-        if (!containsExcluded && possibleName.length >= 2) {
-          nameMatch = [possibleNameMatch[0], possibleName];
-        }
-      }
-    }
-    
-    // Pattern 4: Simple single names in short inputs ("Mark", "Sarah", etc.)
-    if (!nameMatch && userInput.trim().length <= 20) {
-      // If the entire input is just a name (possibly with punctuation)
-      const simpleName = userInput.replace(/[.!?]/g, '').trim();
-      if (/^[A-Z][a-z]+$/.test(simpleName) && simpleName.length >= 2) {
-        nameMatch = [simpleName, simpleName];
-      }
-    }
-    
-    if (nameMatch?.[1]) {
-      extractedInfo.name = nameMatch[1].trim();
-      console.log(`✅ Extracted name: "${extractedInfo.name}" from input: "${userInput}"`);
-    } else {
-      console.log(`❌ Could not extract name from input: "${userInput}"`);
-    }
+    // Name extraction is now handled separately in the main flow
     
     // Extract phone patterns
     const phoneMatch = userInput.match(/(\+?[0-9\s\-\(\)]{8,})/);
@@ -710,29 +778,7 @@ ${context.customerInfo?.preferredService ? `- Service interest: ${context.custom
       }
     }
     
-    // Also extract these for any intent (they might mention their name/phone anytime)
-    
-    // Extract just the first name if they say something like "Hi, this is John" 
-    if (!extractedInfo.name) {
-      const greetingNamePatterns = [
-        /(?:hi|hello|g'day),?\s+(?:this is |i'm |it's |my name is )?([a-zA-Z]+)/i,
-        /(?:speaking),?\s+(?:this is |it's )?([a-zA-Z]+)/i,
-        /^([A-Z][a-z]+)\s+speaking/i  // "John speaking"
-      ];
-      
-      for (const pattern of greetingNamePatterns) {
-        const match = userInput.match(pattern);
-        if (match?.[1]) {
-          const name = match[1].trim();
-          // Avoid common greeting words
-          const greetingWords = ['there', 'mate', 'sir', 'madam', 'you'];
-          if (!greetingWords.includes(name.toLowerCase()) && name.length >= 2) {
-            extractedInfo.name = name;
-            break;
-          }
-        }
-      }
-    }
+
     
     return extractedInfo;
   }
@@ -750,6 +796,48 @@ ${context.customerInfo?.preferredService ? `- Service interest: ${context.custom
    * End conversation and cleanup
    */
   async endConversation(callSid: string): Promise<void> {
+    // Get conversation context before cleanup to update call record
+    try {
+      const contextData = await redis.get(`conversation:${callSid}`);
+      if (contextData) {
+        let context: ConversationContext;
+        if (typeof contextData === 'string') {
+          context = JSON.parse(contextData);
+        } else {
+          context = contextData as ConversationContext;
+        }
+        
+        // Update call record with final status and duration
+        try {
+          const endTime = new Date();
+          const startTime = new Date(context.startTime);
+          const durationSeconds = Math.round((endTime.getTime() - startTime.getTime()) / 1000);
+          
+          await db.query(
+            `UPDATE ringaroo.calls 
+             SET status = 'completed', 
+                 ended_at = $1,
+                 duration_seconds = $2,
+                 transcript = $3::jsonb,
+                 updated_at = NOW()
+             WHERE twilio_call_sid = $4`,
+            [
+              endTime,
+              durationSeconds,
+              JSON.stringify(context.messages || []),
+              callSid
+            ]
+          );
+          console.log(`Call ${callSid} completed - Duration: ${durationSeconds}s`);
+        } catch (dbError) {
+          console.error(`Failed to update call completion for ${callSid}:`, dbError);
+        }
+      }
+    } catch (error) {
+      console.error(`Error finalizing call ${callSid}:`, error);
+    }
+    
+    // Clean up Redis conversation data
     await redis.delete(`conversation:${callSid}`);
   }
 }

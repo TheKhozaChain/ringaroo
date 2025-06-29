@@ -44,7 +44,9 @@ export class BookingService {
       customerEmail: request.customerEmail || undefined,
       serviceType: request.serviceType || undefined,
       preferredDate: preferredDate || undefined,
-      preferredTime: request.preferredTime || undefined,
+      preferredTime: this.formatTimeForDatabase(request.preferredTime) || undefined,
+      estimatedDuration: 60, // Default 1 hour for most services
+      priorityLevel: this.determinePriorityLevel(request.serviceType),
       notes: request.twilioCallSid ? `Call SID: ${request.twilioCallSid}` : undefined,
       status: 'pending',
       externalBookingId: undefined
@@ -218,6 +220,69 @@ export class BookingService {
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     return emailRegex.test(email);
   }
+
+  /**
+   * Determine priority level based on service type
+   */
+  private determinePriorityLevel(serviceType?: string): 'low' | 'normal' | 'high' | 'emergency' {
+    if (!serviceType) return 'normal';
+    
+    const emergencyServices = ['termite emergency', 'termite', 'restaurant', 'commercial', 'urgent'];
+    const highServices = ['cockroach', 'roach', 'infestation'];
+    
+    const lowerService = serviceType.toLowerCase();
+    
+    if (emergencyServices.some(service => lowerService.includes(service))) {
+      return 'emergency';
+    } else if (highServices.some(service => lowerService.includes(service))) {
+      return 'high';
+    } else {
+      return 'normal';
+    }
+  }
+
+  /**
+   * Format time string for database storage (PostgreSQL TIME format)
+   */
+  private formatTimeForDatabase(timeStr?: string): string | undefined {
+    if (!timeStr) return undefined;
+    
+    try {
+      // Clean the input
+      const cleanTime = timeStr.toLowerCase().trim();
+      
+      // Handle various time formats
+      let hour = 0;
+      let minute = 0;
+      
+      // Extract numbers from the string
+      const timeMatch = cleanTime.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/i);
+      
+      if (timeMatch) {
+        hour = parseInt(timeMatch[1]!, 10);
+        minute = timeMatch[2] ? parseInt(timeMatch[2], 10) : 0;
+        const period = timeMatch[3]?.toLowerCase();
+        
+        // Convert to 24-hour format
+        if (period === 'pm' && hour !== 12) {
+          hour += 12;
+        } else if (period === 'am' && hour === 12) {
+          hour = 0;
+        }
+        
+        // Validate hour and minute
+        if (hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59) {
+          // Format as HH:MM:SS for PostgreSQL TIME type
+          return `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}:00`;
+        }
+      }
+      
+      return undefined;
+    } catch (error) {
+      console.error('Time formatting error:', error);
+      return undefined;
+    }
+  }
   
   /**
    * Send booking notification emails
@@ -263,7 +328,7 @@ export class BookingService {
   /**
    * Update booking status
    */
-  async updateBookingStatus(bookingId: string, status: 'pending' | 'confirmed' | 'cancelled', notes?: string): Promise<Booking | null> {
+  async updateBookingStatus(bookingId: string, status: 'pending' | 'confirmed' | 'in_progress' | 'completed' | 'cancelled', notes?: string): Promise<Booking | null> {
     const updates: Partial<Booking> = { status };
     if (notes) {
       updates.notes = notes;

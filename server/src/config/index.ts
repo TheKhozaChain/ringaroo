@@ -34,7 +34,7 @@ const envSchema = z.object({
   JWT_SECRET: z.string().min(32).default('97b8520c61a7f9b8366f90b03f73a76f51946945a00556d7de2f93a0aa329eed'),
   
   // Application
-  WEBHOOK_BASE_URL: z.string().url().default('https://c983-141-168-133-192.ngrok-free.app'),
+  WEBHOOK_BASE_URL: z.string().url().default('https://0aca-141-168-133-192.ngrok-free.app'),
   MAX_CONCURRENT_CALLS: z.string().transform(Number).default('10'),
   DIALOGUE_TIMEOUT_MS: z.string().transform(Number).default('30000'),
   ASR_CONFIDENCE_THRESHOLD: z.string().transform(Number).default('0.7'),
@@ -54,7 +54,7 @@ export const appConfig: AppConfig = {
   openaiApiKey: envVars.OPENAI_API_KEY || 'sk-demo-key-for-testing',
   openaiModel: envVars.OPENAI_MODEL,
   openaiEmbeddingModel: envVars.OPENAI_EMBEDDING_MODEL,
-  azureSpeechKey: envVars.AZURE_SPEECH_KEY,
+  azureSpeechKey: 'ABj8Pjii8kPEgcQG9jDYaUqqFoc1cF5QnnfDz1SOkjBRV8IjXLMIJQQJ99BFACL93NaXJ3w3AAAYACOG4Xk1',
   azureSpeechRegion: envVars.AZURE_SPEECH_REGION,
   elevenlabsApiKey: envVars.ELEVENLABS_API_KEY,
   elevenlabsVoiceId: envVars.ELEVENLABS_VOICE_ID,

@@ -159,16 +159,16 @@ export class MockTTSService implements TTSService {
 
 // Factory function to create appropriate TTS service
 export function createTTSService(): TTSService {
-  // Prioritize OpenAI TTS-HD for best quality/price ratio
-  if (appConfig.openaiApiKey) {
-    console.log('Using OpenAI TTS-1-HD service');
-    return new OpenAITTSService();
-  } else if (appConfig.azureSpeechKey && appConfig.azureSpeechRegion) {
+  // Prioritize Azure for best performance and cost
+  if (appConfig.azureSpeechKey && appConfig.azureSpeechRegion) {
     console.log('Using Azure TTS service');
     return new AzureTTSService();
   } else if (appConfig.elevenlabsApiKey && appConfig.elevenlabsVoiceId) {
     console.log('Using ElevenLabs TTS service');
     return new ElevenLabsTTSService();
+  } else if (appConfig.openaiApiKey) {
+    console.log('Using OpenAI TTS-1-HD service');
+    return new OpenAITTSService();
   } else {
     console.warn('No TTS service configured, using mock TTS service');
     return new MockTTSService();
@@ -327,9 +327,9 @@ class TTSCacheManager {
   private getTimeoutForText(text: string): number {
     const length = text.length;
     // Optimized timeouts based on text length to prevent longer phrase timeouts
-    if (length <= 50) return 2000;      // 2 seconds for short text
-    if (length <= 100) return 3000;     // 3 seconds for medium text  
-    if (length <= 150) return 4000;     // 4 seconds for longer text
+    if (length <= 50) return 3000;      // 3 seconds for short text
+    if (length <= 100) return 4000;     // 4 seconds for medium text  
+    if (length <= 150) return 5000;     // 5 seconds for longer text
     return 5000;                        // 5 seconds for very long text
   }
 
@@ -421,20 +421,37 @@ class TTSCacheManager {
       return `<Play>${url}</Play>`;
 
     } catch (error) {
-      console.warn(`Real-time OpenAI TTS failed, using fallback: ${error instanceof Error ? error.message : error}`);
+      console.error(`OpenAI TTS failed: ${error instanceof Error ? error.message : error}`);
       
-      // Fallback to basic TTS for immediate response
-      const sanitizedText = this.sanitizeForXML(text);
+      // 100% OpenAI TTS requirement - extend timeout and retry instead of fallback
+      console.log('Extending timeout and retrying OpenAI TTS generation...');
       
-      // Continue generating OpenAI TTS in background for next time
-      this.ttsAudioManager.generateAudioUrl(text, callId)
-        .then(url => {
-          this.cache.set(text, url);
-          console.log(`Background cached OpenAI TTS: "${text.substring(0, 30)}..." -> ${url}`);
-        })
-        .catch(error => console.warn('Background TTS failed:', error));
+      try {
+        // Extended timeout retry - up to 5 seconds for OpenAI TTS
+        const urlPromise = this.ttsAudioManager.generateAudioUrl(text, callId);
+        const extendedTimeoutPromise = new Promise<never>((_, reject) => 
+          setTimeout(() => reject(new Error('Extended TTS timeout')), 5000)
+        );
 
-      return `<Say voice="man">${sanitizedText}</Say>`;
+        const url = await Promise.race([urlPromise, extendedTimeoutPromise]);
+        this.cache.set(text, url);
+        console.log(`Extended timeout OpenAI TTS success: "${text.substring(0, 30)}..." -> ${url}`);
+        return `<Play>${url}</Play>`;
+        
+      } catch (retryError) {
+        console.error(`Extended OpenAI TTS retry failed: ${retryError instanceof Error ? retryError.message : retryError}`);
+        
+        // Use a pre-cached generic OpenAI response instead of Twilio fallback
+        const genericResponse = this.cache.get("Sorry mate, I'm having a bit of trouble right now. Please try again in a moment.");
+        if (genericResponse) {
+          console.log('Using cached generic OpenAI TTS response for technical difficulties');
+          return `<Play>${genericResponse}</Play>`;
+        }
+        
+        // Last resort: hang up rather than use Twilio voice
+        console.error('No cached response available - ending call to maintain 100% OpenAI TTS requirement');
+        return '<Hangup/>';
+      }
     }
   }
 

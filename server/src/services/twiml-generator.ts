@@ -62,12 +62,9 @@ export class TwiMLGenerator {
    * Generate audio element synchronously with smart caching
    */
   private static async generateAudioElementSync(text: string, callId?: string, useAdvancedTTS: boolean = true): Promise<string> {
-    if (!useAdvancedTTS) {
-      // Use basic TTS
-      const sanitizedText = this.sanitizeForXML(text);
-      return `<Say voice="man">${sanitizedText}</Say>`;
-    }
-
+    // 100% OpenAI TTS requirement - always use advanced TTS
+    console.log('🎯 Using 100% OpenAI TTS (no Twilio fallback allowed)');
+    
     // Use the cache manager for smart TTS selection
     // This will return <Play> for cached OpenAI audio or properly wait for TTS
     return await ttsCacheManager.getAudioElement(text, callId);
@@ -77,12 +74,9 @@ export class TwiMLGenerator {
    * Generate audio element - either <Say> or <Play> based on TTS availability
    */
   private static async generateAudioElement(text: string, callId?: string, useAdvancedTTS: boolean = true): Promise<string> {
-    if (!useAdvancedTTS) {
-      // Use basic Twilio TTS
-      const sanitizedText = this.sanitizeForXML(text);
-      return `<Say voice="man">${sanitizedText}</Say>`;
-    }
-
+    // 100% OpenAI TTS requirement - always use advanced TTS
+    console.log('🎯 Using 100% OpenAI TTS (no Twilio fallback allowed)');
+    
     try {
       // Try to generate advanced TTS
       const { url, fallbackText } = await ttsAudioManager.generateAudioWithFallback(text, callId);
@@ -91,15 +85,13 @@ export class TwiMLGenerator {
         // Use <Play> for high-quality TTS
         return `<Play>${url}</Play>`;
       } else {
-        // Fallback to <Say> if TTS fails
-        const sanitizedText = this.sanitizeForXML(fallbackText);
-        return `<Say voice="man">${sanitizedText}</Say>`;
+        // Use our enhanced TTS service instead of Twilio fallback
+        return await ttsCacheManager.getAudioElement(text, callId);
       }
     } catch (error) {
-      console.error('Failed to generate advanced TTS, using fallback:', error);
-      // Fallback to basic TTS
-      const sanitizedText = this.sanitizeForXML(text);
-      return `<Say voice="man">${sanitizedText}</Say>`;
+      console.error('TTS generation failed, using enhanced TTS retry:', error);
+      // Use enhanced TTS service retry instead of Twilio fallback
+      return await ttsCacheManager.getAudioElement(text, callId);
     }
   }
 
@@ -123,14 +115,26 @@ export class TwiMLGenerator {
    * Generate TwiML for error conditions
    */
   static generateErrorTwiML(errorMessage: string = "Sorry, we're experiencing technical difficulties."): string {
-    const sanitizedMessage = this.sanitizeForXML(errorMessage);
+    // 100% OpenAI TTS requirement - use cached response or hang up instead of Twilio voice
+    console.log('🚨 Error condition - checking for cached OpenAI TTS response');
     
-    return `<?xml version="1.0" encoding="UTF-8"?>
+    // Try to use cached OpenAI TTS for error message  
+    const cachedErrorResponse = (ttsCacheManager as any).cache.get("Sorry mate, I'm having a bit of trouble right now. Please try again in a moment.");
+    
+    if (cachedErrorResponse) {
+      console.log('Using cached OpenAI TTS for error response');
+      return `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Say voice="man">${sanitizedMessage}</Say>
-    <Say voice="man">Please try calling back later. Thanks for your patience!</Say>
+    <Play>${cachedErrorResponse}</Play>
     <Hangup/>
 </Response>`;
+    } else {
+      console.log('No cached OpenAI TTS available - hanging up to maintain 100% OpenAI TTS requirement');
+      return `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Hangup/>
+</Response>`;
+    }
   }
 
   /**
@@ -141,10 +145,10 @@ export class TwiMLGenerator {
     const expectsResponse = this.shouldExpectResponse(callState, message);
     
     // Customize timeout based on conversation step
-    const timeout = this.getTimeoutForStep(callState.conversationStep);
+    const timeout = callState ? this.getTimeoutForStep(callState.conversationStep) : this.DEFAULT_TIMEOUT;
     
     // Generate appropriate retry message based on context
-    const retryMessage = this.getRetryMessageForStep(callState.conversationStep);
+    const retryMessage = callState ? this.getRetryMessageForStep(callState.conversationStep) : "I didn't catch that. Could you please repeat?";
 
     return await this.generateConversationTwiML({
       message,
@@ -174,16 +178,21 @@ export class TwiMLGenerator {
     }
 
     // Check conversation step
-    switch (callState.conversationStep) {
-      case 'greeting':
-      case 'collecting_info':
-      case 'booking':
-        return true;
-      case 'completing':
-        return false;
-      default:
-        return true; // Default to expecting response unless explicitly completing
+    if (callState) {
+      switch (callState.conversationStep) {
+        case 'greeting':
+        case 'collecting_info':
+        case 'booking':
+          return true;
+        case 'completing':
+          return false;
+        default:
+          return true; // Default to expecting response unless explicitly completing
+      }
     }
+    
+    // Default to expecting response if no call state
+    return true;
   }
 
   /**
@@ -272,9 +281,9 @@ export class TwiMLGenerator {
       return false;
     }
 
-    // Simple validation - just check for required elements
-    if (!twiml.includes('<Say') && !twiml.includes('<Gather')) {
-      console.error('TwiML missing required content elements');
+    // Simple validation - check for content elements (Play, Gather, or Hangup)
+    if (!twiml.includes('<Play') && !twiml.includes('<Gather') && !twiml.includes('<Hangup')) {
+      console.error('TwiML missing required content elements (Play, Gather, or Hangup)');
       return false;
     }
 

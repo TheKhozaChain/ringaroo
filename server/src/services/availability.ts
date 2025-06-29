@@ -36,10 +36,11 @@ class AvailabilityService {
     let technicians: Technician[] = []
     
     if (technicianId) {
-      technician = await db.getTechnicianById(technicianId)
-      if (!technician) {
+      const fetchedTechnician = await db.getTechnicianById(technicianId)
+      if (fetchedTechnician === null) {
         throw new Error('Technician not found')
       }
+      technician = fetchedTechnician
       technicians = [technician]
     } else {
       technicians = await db.getTechniciansAvailableForDate(tenantId, date)
@@ -64,7 +65,7 @@ class AvailabilityService {
     const unavailableSlots: TimeSlot[] = []
     
     for (const tech of technicians) {
-      const dayAvailability = tech.availability[dayOfWeek]
+      const dayAvailability = tech.availability[dayOfWeek!]
       if (!dayAvailability) continue
       
       const workStart = this.parseTime(dayAvailability.start)
@@ -183,7 +184,7 @@ class AvailabilityService {
         if (availability.availableSlots.length > 0) {
           return {
             date: checkDate,
-            timeSlot: availability.availableSlots[0],
+            timeSlot: availability.availableSlots[0]!,
             technician
           }
         }
@@ -262,7 +263,7 @@ class AvailabilityService {
     const bookings = await db.getTechnicianBookingsForDate(technicianId, date)
     
     const dayOfWeek = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'][date.getDay()]
-    const dayAvailability = technician.availability[dayOfWeek]
+    const dayAvailability = technician.availability[dayOfWeek!]
     
     let totalHours = 0
     let maxHours = 0
@@ -292,7 +293,7 @@ class AvailabilityService {
   
   private parseTime(timeString: string): number {
     const [hours, minutes] = timeString.split(':').map(Number)
-    return hours * 60 + minutes
+    return (hours || 0) * 60 + (minutes || 0)
   }
   
   private formatTime(minutes: number): string {
