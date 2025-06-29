@@ -161,4 +161,3 @@ CREATE TRIGGER update_knowledge_sources_updated_at BEFORE UPDATE ON ringaroo.kno
 CREATE TRIGGER update_technicians_updated_at BEFORE UPDATE ON ringaroo.technicians FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 CREATE TRIGGER update_bookings_updated_at BEFORE UPDATE ON ringaroo.bookings FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 CREATE TRIGGER update_calls_updated_at BEFORE UPDATE ON ringaroo.calls FOR EACH ROW EXECUTE FUNCTION update_updated_at_column(); 
-CREATE TRIGGER update_calls_updated_at BEFORE UPDATE ON ringaroo.calls FOR EACH ROW EXECUTE FUNCTION update_updated_at_column(); 
